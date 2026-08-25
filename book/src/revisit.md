@@ -1032,133 +1032,188 @@ proof (shared by all) are paid once and amortized across the epoch.
 
 ### Transaction Life Cycle {#txflow}
 
-The wallet maintains one renewable spendability proof per unspent note. It binds
-the note's action description and active nullifier pair to an authenticated
-anchor, while remembering the note's original inclusion and every exclusion
-segment proven since. Extending this one proof advances inclusion ancestry and
-unspent history together.
+At a high level, Tachyon retains the Orchard/Ironwood transaction pipeline: the
+wallet prepares Spend and Output actions, proves their validity, balance-binds
+and authorizes the bundle, and submits the enclosing transaction to the
+mempool.
 
-The flow is as follows:
+Tachyon differs in two main respects:
 
-1. **Initialize as soon as the note is usable.** Once the creation block is
-   finalized, the wallet proves that the note commitment belongs to its creation
-   stamp, authenticates the remainder of that block, and proves the complete
-   ownership, value, and authorization relation. If the resulting anchor is in
-   epoch $e$, the proof exposes $(\nf_e,\nf_{e+1})$. No exclusion proof or OSS
-   response is required, and the result can immediately support a same-epoch
-   spend.
+- **Spend-proof construction.** [Evolving nullifiers](#nf) require an older
+  note to prove nullifier exclusion across past epochs. This work can be
+  delegated to an OSS without identifying the note, after which the wallet
+  binds the returned exclusion proof to its local derivation and may privately
+  advance the anchor. Because Spend and Output proofs have very different
+  workloads, they no longer share one circuit or proof path.
+- **PCD aggregation.** The action proofs in one bundle are folded into a
+  [Tachyon stamp](#tx), and finished stamps from different transactions may be
+  folded again into one aggregate proof.
 
-2. **Derive nullifiers and prove exclusion in parallel.** As epochs become
-   relevant, the wallet locally derives epoched nullifiers and commits to them
-   using an extensible [ranged nullifier commitment](#nf-flow). In parallel, it
-   may give one or more OSSs opaque $(i,\nf_i)$ lists and authenticated history
-   intervals. The OSS proves each supplied nullifier absent from its assigned
-   interval and commits to the epoched nullifiers it tested. This exclusion
-   proof is note-independent: the request carries neither $\cm$ nor a user
-   proof, so maintenance, an imminent spend, and a decoy have the same
-   cryptographic shape.
+<p align="center">
+  <a href="./assets/tx_flow.svg">
+    <img src="./assets/tx_flow.svg" alt="transaction life cycle" />
+  </a>
+</p>
 
-3. **Bind and advance.** The wallet proves that the epoched nullifiers tested by
-   the OSS form a subsequence of its locally derived range, binds the result to
-   the same note as the cached spendability proof, and checks that the proved
-   interval starts at the cached anchor. It then advances the proof to the
-   interval's end and derives the nullifier pair for that endpoint's epoch.
+The transaction flow is as follows:
 
-   A client may apply adjacent OSS responses sequentially, which already
-   combines work from multiple OSSs. It may also perform the entire update
-   locally. In particular, the wallet can privately extend a short distance
-   beyond the OSS endpoint, immediately testing the active nullifier against
-   that additional history so the resulting proof remains renewable.
+1. **Initialize the spendability proof.** Once the note's creation block is
+   included on chain, the wallet proves that the note commitment belongs to its
+   creation stamp and authenticates the remaining anchor-chain transitions
+   through the block's final anchor. The resulting proof can support an
+   immediate same-epoch spend or be cached for later synchronization. Within
+   the inclusion epoch, the wallet may advance its anchor locally, without
+   delegated work, to avoid revealing the exact inclusion anchor.
 
-4. **Generate a stamp.** Output proofs are independent of historical anchors and
-   can be reused. The wallet combines them with its spend proofs at one target
-   anchor. If several spends begin at different anchors in the target epoch, it
-   proves their ancestry to the common target without treating that terminal
-   adjustment as renewable maintenance; consensus's live window covers the
-   target epoch. A single newly included spend can use its inclusion anchor
-   directly, giving the shortest path from inclusion proof to stamp.
+2. **Synchronize spendability: local derivation and delegated exclusion.** To
+   spend a note from a past epoch, the wallet advances the cached proof to a
+   recent anchor, typically the starting sentinel $\sntl_e$ of the spending
+   epoch $e$. This requires proving that the note remained unspent after the
+   cached anchor. The wallet locally derives the required epoched nullifiers and
+   commits to them with a [ranged nullifier commitment](#nf-flow). In parallel,
+   it may give one or more OSSs opaque lists of $(i,\nf_i)$ values. The OSS
+   proves each value absent from its assigned authenticated portion of epoch
+   $i$ and commits to the epoched nullifiers it tested.
 
-   The bundle accumulator collects *two tachygrams per action*:
-   $(\nf_e,\nf_{e+1})$ for a spend and $(\cm,\tg_\bot)$ for an output. The result
-   is the [Tachyon stamp](#tx), with public input
-   $(\{(\cv_i,\rk_i)\},\{\tg_i\},\tgacc,\anchor)$.
-   Revealing both adjacent nullifiers protects the transaction against the
-   [cross-epoch race](#race) while it waits in the mempool.
+   The request and returned exclusion proof are note-independent: OSS cannot
+   differentiate a syncing request from a decoy request unrelated to any note.
+   After the proofs return, the wallet shows that the epoched nullifiers
+   tested by the OSS form a subsequence of its locally derived range. This binds
+   the two independently constructed branches into an unspent proof, which is
+   then folded into the cached spendability proof. The wallet may locally
+   cover a final anchor segment beyond the OSS endpoint before spending.
 
-5. **Authorize and bind.** Concurrent to the proving path above,
-the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
-the effecting data, and produces:
-    - an authorization signature for every action, verifiable against its
-    published $\rk$: spends sign under the [re-randomized key](#payment-key)
-    $\ask + \alpha$ (a custody round-trip), outputs under the bare randomizer
-    $\alpha$ (no authority needed, signable by the hot device);
-    - the net value balance $v^\mathsf{bal}$ and a single [binding signature](#tx)
-    $\sigma^\mathsf{bind}$ over the value commitments.
+3. **Fold the action proofs into a stamp.** Output actions are independent of
+   historical anchors, require no synchronization, and can be constructed when
+   the transaction is prepared. The wallet folds all action proofs into one
+   [Tachyon stamp](#tx). The stamp contains the aggregated PCD proof and public
+   input
 
-6. **Mempool and aggregation.** The finished transaction enters the mempool as a
-standalone *Tachyon autonome*. A miner or another aggregator may then lift
-several stamps whose anchors lie in the same epoch to a common later anchor,
-take the
-[multiset union](#union) of their tachygrams and accumulators, and produce one
-aggregated PCD proof. Each constituent's stamp is replaced by a reference to the
-aggregate transaction's `wtxid`, moving the tachygrams, anchor, and proof
-onto the aggregate.
+   $$
+   (\{(\cv_i,\rk_i)\},\{\tg_i\},\tgacc,\anchor).
+   $$
+
+   The bundle accumulator $\tgacc$ commits to *two tachygrams per action*:
+   $(\nf_e,\nf_{e+1})$ for a spend and $(\cm,\tg_\bot)$ for an output. Revealing
+   both adjacent nullifiers protects the transaction against the
+   [cross-epoch race](#race) while it waits in the mempool. The wallet may also
+   lift the finished stamp to a later target anchor within the same spending
+   epoch.
+
+4. **Authorize and balance-bind.** Concurrently with the proving path above,
+   the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
+   the effecting data, and produces:
+
+   - an authorization signature for every action, verifiable against its
+     published $\rk$: spends sign under the
+     [re-randomized key](#payment-key) $\ask+\alpha$ (a custody round-trip),
+     while outputs sign under the bare randomizer $\alpha$ (no spend authority
+     is needed, so a hot device can sign); and
+   - the net value balance $v^\mathsf{bal}$ and one
+     [binding signature](#tx) $\sigma^\mathsf{bind}$ over the value
+     commitments.
+
+5. **Mempool and aggregation.** The finished transaction enters the mempool as a
+standalone Tachyon bundle. A miner or another aggregator may lift several stamps
+whose anchors lie in the same epoch to a common later anchor, take the
+[multiset union](#union) of their tachygrams, combine their accumulators, and
+produce one aggregated PCD proof. Each constituent stamp is replaced by a
+reference to the aggregate transaction's `wtxid`; the aggregate carries the
+combined tachygrams, accumulator, anchor, and proof.
 
 #### Consensus Validation {#consensus-rule}
 
-Of the consensus rules, the bundle balance check and authorization-signature
-validation are unchanged from Orchard; only stamp verification is new.
+The bundle balance check and authorization-signature validation are unchanged
+from Orchard. Tachyon adds stamp verification and a live tachygram-duplicate
+window.
 
 **Stamp verification.** Given the published tachygrams $\set{\tg_i}$, accumulator
 $\tgacc$, and $\anchor$, the validator:
 
-1. checks that the target $\anchor$ occurs in canonical finalized history and
-   obtains $e=\mathsf{Epoch}(\anchor)$;
+1. checks that the target $\anchor$ occurs in canonical chain history and
+   obtains $e=\mathsf{Epoch}(\anchor)$.
 2. confirms $e$ is either the current or the preceding epoch:
-   $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$; and
+   $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$.
 3. verifies the stamp's PCD proof against
    $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\anchor)$. The proof enforces
-   $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
-   [batched check](#acc-correct)), the integrity of the revealed nullifiers and
-   output commitments, and the finalized inclusion and required past exclusion
-   of every spent note.
+   $\tgacc$'s consistency with the published $\set{\tg_i}$, the integrity of the
+   revealed nullifiers and output commitments, and the initial inclusion and
+   past exclusion of every spent note.
 
-A stamp's proof is bound to its public target $\anchor$ in epoch $e$. Its past
-exclusion claim ends at $\sntl_e$; consensus checks epoch $e$ from the live window.
-A strict rule would accept the stamp only while the chain is still in $e$,
-forcing a refresh the instant the epoch advances. Tachyon *relaxes* this
-(step 1 above): a proof for $e$ is accepted while the chain tip is in epoch $e$
-*or* $e+1$. The stamp may therefore lag the chain by one epoch, so a transaction
-that drifts across an epoch boundary while waiting in the mempool stays valid.
+<p align="center">
+  <a href="./assets/consensus_window.svg">
+    <img src="./assets/consensus_window.svg" alt="consensus validation window" />
+  </a>
+</p>
 
-**Consensus window (new double-spend rule).**
-To close the gap between $\sntl_e$ and the block that includes the stamp,
-consensus enforces a live duplicate check spanning **the current and preceding
-epochs**. Validators hold the tachygrams of the two most recent epochs in memory
-and process a candidate bundle's tachygrams in deterministic order, checking and
-inserting each before checking the next. A tachygram therefore conflicts with
-the retained window, an earlier bundle in the block, or an earlier tachygram in
-the same bundle. The window is two epochs wide exactly because the stamp proof
-may be one epoch stale.
+**What the stamp proves.** A stamp's PCD proof is bound to its public target
+$\anchor$, which is either the starting sentinel $\sntl_e$ or an ordinary
+anchor in the target epoch $e$. The diagram above shows where each historical
+claim ends:
 
-Relaxed freshness does *not* weaken soundness, because each spend publishes the
-pair $(\nf_e, \nf_{e+1})$. Whichever of the two permitted epochs accepts the
-stamp, the pair already contains that epoch's nullifier:
+- **Same-epoch spend.** Inclusion is established through the note's inclusion
+  anchor in epoch $e$. No nullifier-exclusion claim is needed before that point,
+  because the note did not yet exist. Anchor-chain authenticity then connects
+  the inclusion anchor to the target $\anchor$.
+- **Past-epoch spend.** Inclusion is established in an earlier epoch, and
+  nullifier exclusion is proven from the inclusion anchor through the start of
+  epoch $e$, $\sntl_e$. From $\sntl_e$ onward, the proof establishes
+  anchor-chain authenticity through the target $\anchor$ but makes no further
+  exclusion claim.
 
-- accepted in $e$: the window covers $\set{e-1, e}$ and $\nf_e$ is the active
-  nullifier. A double-spend of the same note must publish the same $\nf_e$ and
-  collide; so does a prior spend back in $e-1$ that carried $\nf_e$ as its
-  next-epoch nullifier.
-- accepted in $e+1$: the window covers $\set{e, e+1}$ and $\nf_{e+1}$ is the active
-  nullifier, catching any competitor targeting $e+1$. A double-spend made in epoch
-  $e$ is caught too, since its $\nf_e$ also falls in the window.
+Thus, in either case, the stamp proves the required inclusion, all required
+exclusion before epoch $e$, and an authentic path to its target anchor.
+It does not claim that $\nf_e$ is absent from epoch $e$.
 
-**Standalone vs. aggregated.** Balance, authorization, and the tachygram-window
-check run per constituent bundle in both cases; only the stamp proof differs. A
-standalone autonome is verified against its own stamp, whereas the constituents of
-an [aggregated](#aggregation) bundle have had their stamps stripped and replaced
-by a reference, so one PCD proof stands in for the whole batch and amortizes
-verification across it.
+**Target-epoch duplicate check.** Every spend targeting epoch $e$ must therefore
+publish $\nf_e$. Consensus places every tachygram published in epoch $e$ into
+one duplicate set. A candidate is checked against the values already in that
+set and then inserted, so later candidates are checked against it in turn. By
+the end of the epoch, the check has covered the whole of $e$. Two spends of the
+same note targeting $e$ derive the same $\nf_e$ and therefore collide. This
+uniform whole-epoch check applies identically to same-epoch and past-epoch
+spends.
+
+**Epoch-boundary race.** If stamps targeting $e$ were accepted only during
+epoch $e$, publishing $\nf_e$ and checking epoch $e$ would suffice. In practice,
+a transaction may still be waiting in the mempool when epoch $e+1$ begins.
+Requiring an immediate proof refresh would make transaction validity brittle,
+so Tachyon also accepts an epoch-$e$ stamp during epoch $e+1$. Each spend
+publishes the adjacent pair $(\nf_e,\nf_{e+1})$ so that the same stamp remains
+protected after this boundary crossing.
+
+**Consensus window (new double-spend rule).** The one-epoch grace period means
+that, while processing epoch $e$, validators may see both fresh stamps targeting
+$e$ and lagging stamps targeting $e-1$. Consensus therefore retains one
+duplicate window containing all tachygrams from the **current and preceding
+epochs**. Candidate tachygrams are processed in deterministic order, with each
+value checked and inserted before the next. A candidate consequently conflicts
+with the retained window, an earlier bundle in the same block, or an earlier
+tachygram in its own bundle.
+
+For a stamp targeting epoch $e$, the two possible acceptance times are safe:
+
+- **Accepted in $e$.** The live window is $\set{e-1,e}$. Another spend targeting
+  $e$ publishes the same $\nf_e$. A spend targeting $e-1$ also publishes
+  $\nf_e$ as its next-epoch nullifier, so a conflicting value published in
+  either retained epoch is detected. A still older spend is impossible for a
+  same-epoch note; for an older note, it lies within the history covered by the
+  stamp's past-exclusion proof.
+- **Accepted in $e+1$.** The live window is $\set{e,e+1}$. A competing spend
+  targeting $e$ shares $\nf_e$, while one targeting $e+1$ shares
+  $\nf_{e+1}$. A spend targeting $e-1$ that was accepted during epoch $e$ also
+  published $\nf_e$ and remains in the preceding-epoch window. If it was
+  accepted earlier, it lies before $\sntl_e$ and is caught by past exclusion.
+  As above, such an earlier spend is impossible for a note created in epoch
+  $e$.
+
+**Verifying standalone vs. aggregated bundles.** Balance, authorization, and
+the tachygram-window check retain the same per-constituent semantics in both
+cases. A standalone bundle is verified against its own stamp. In an aggregated
+bundle, each constituent stamp has been replaced by a reference to the aggregate,
+whose single PCD proof covers the entire batch. Aggregation therefore amortizes
+proof verification without changing which actions, signatures, balances, or
+tachygrams consensus checks.
 
 ### Proof Tree {#prooftree}
 
