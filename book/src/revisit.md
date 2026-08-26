@@ -1164,6 +1164,12 @@ claim ends:
 Thus, in either case, the stamp proves the required inclusion, all required
 exclusion before epoch $e$, and an authentic path to its target anchor.
 It does not claim that $\nf_e$ is absent from epoch $e$.
+A particular stamp may prove more: for example, its underlying spendability proof
+may establish exclusion as far as the target anchor within epoch $e$. However,
+an in-epoch stamp lift can advance that target using anchor-chain evidence alone.
+*The target anchor therefore cannot be interpreted as an exclusion endpoint*. The
+stamp guarantees only the required exclusion prior to epoch $e$: through
+$\sntl_e$ for an older note, while a same-epoch note requires no past exclusion.
 
 **Target-epoch duplicate check.** Every spend targeting epoch $e$ must therefore
 publish $\nf_e$. Consensus places every tachygram published in epoch $e$ into
@@ -1215,57 +1221,18 @@ whose single PCD proof covers the entire batch. Aggregation therefore amortizes
 proof verification without changing which actions, signatures, balances, or
 tachygrams consensus checks.
 
-### Proof Tree {#prooftree}
+### Proof Statement {#statement}
 
-Every Spend or Output action has its own validity statement. A Tachyon
-[transaction](#tx), however, does not carry one proof per action: recursive PCD
-folds all action proofs into a single bundle proof. Sapling carries $n$ independent
-proofs for an $n$-action bundle, while Orchard's aggregate proof still has size and
-verification cost linear in $n$. Tachyon's recursive proof is compressing, with
-sublinear on-chain proof size and verification cost.
+First, we give the three monolithic statements an action's proof must satisfy:
+the per-action statements ([Output](#output) or [Spend](#spend)), and the
+[bundle-level](#bundle) statement that composes them. Their recursive realization
+via a PCD computation graph, where each step covers some sub-statements and
+recursively verify/fold input proofs, follows afterward.
 
-Recursion also lets independent parties construct different parts of the proof.
-The wallet proves note-specific facts, an Oblivious Syncing Service (OSS) proves an
-opaque nullifier sequence absent from past epochs while advancing the corresponding
-sentinel chain, and note-independent epoch evidence can be shared across requests.
-The OSS records one selected join anchor but does not receive an
-inclusion proof; the wallet later binds that conditional statement to its own
-inclusion and nullifier derivations. These branches and the bundle-level
-composition form a binary proof DAG, which we call the **proof tree**.
+#### Output Action Statement {#output}
 
-We first state the monolithic Spend, Output, and bundle conditions, then decompose
-them into bounded recursive steps. This separates two questions: whether the
-monolithic statements are sufficient, and whether the decomposition faithfully
-preserves them across branches and folds. A sub-statement receives its own step
-for one of three reasons:
-
-- **Circuit size.** Each step is a bounded circuit: $2^{11}$ multiplication
-gates, plus up to $4n = 2^{13}$ linear constraints over those gates' wires. The
-linear budget is abundant in practice, so the multiplication-gate count is the
-binding limit and the unit we size steps by. A statement too large for one step
-must be spread across several.
-- **Privacy boundary.** Some sub-statements need secret witnesses that would leak
-note privacy or spend linkability if the OSS saw them. They remain on a
-user-local branch; the OSS constructs a separate conditional proof and relays
-only that result to the user.
-- **Proof reuse.** Some sub-statement proofs are shared across many notes, such as
-[epoch accumulator $e(X)$ integrity](#epoch-acc). Proving such a statement once lets
-it feed into many notes' proof trees as a ready-made input, with no per-note
-recomputation.
-
-#### Action Statements {#statement}
-
-We give the three monolithic statements an action's proof must satisfy: the
-per-action statements ([Output](#output) or [Spend](#spend)), and the
-[bundle-level](#bundle) statement that composes them. These statements describe
-only the end-to-end relation; their recursive realization follows afterward.
-Single-party conditions are tagged by who is responsible for establishing them:
-$\Sc$ (shared evidence), $\Uc$ (the user), or $\Oc$ (the OSS). Conditions shared
-across multiple parties are left untagged.
-
-<a id="output">**Output Action Statement**</a>
-
-A valid instance of an *Output Action statement* assures that, given the public input:
+A valid instance of an *Output Action statement* assures that, given the public
+input:
 
 - $\cv$: net value commitment
 - $\rk$: randomized action validation key, carrying no spend authority
@@ -1275,128 +1242,110 @@ A valid instance of an *Output Action statement* assures that, given the public 
 
 the prover knows the secret witness:
 
-- $\mathsf{Note} := (\pk, v, \psi, \rcm)$: note opening, where $\pk$ is the
+- $\mathsf{Note}:=(\pk,v,\psi,\rcm)$: note opening, where $\pk$ is the
   recipient's payment key taken from their address
 - $r_\bot$: an arbitrary preimage for the dummy tachygram
-- the randomizers $\theta, \rcv$
+- the randomizers $\theta,\rcv$
 
 such that the following conditions hold:
 
-- **Value commitment integrity** ($\Uc$): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
+- **Value commitment integrity**: $\cv=[-v]\G+[\rcv]\H$, committing the
   negated created value (value entering the pool counts negatively toward
   $v^\mathsf{bal}$, per the [sign convention](#tx)).
-- **Value range** ($\Uc$): $0 \leq v \leq v_\mathsf{max}$ in-circuit, with
-  $v_\mathsf{max} = 2.1\times10^{15}$ zatoshi (`MAX_MONEY`): non-negative as in
-  Ironwood: zero-value outputs are legal (e.g., carrying a memo with no
-  payment); with the upper bound keeping balance arithmetic overflow-free.
-- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$, the
-  published commitment opens to this note.
-- **Dummy tachygram integrity** ($\Uc$): $\tg_\bot = H^{\cm_\bot}(r_\bot)$, where
-  $H^{\cm_\bot}$ is a domain-separated hash reserved for dummy commitment.
-- **Nonzero tachygrams** ($\Uc$): $\cm \neq 0$ and $\tg_\bot \neq 0$.[^nonzero]
-- **Authorization** ($\Uc$): $\rk = [\alpha]\,\G$ and
-  $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validation key to the output
-  note. The signing key behind $\rk$ is $\alpha$ itself — creating an output
-  requires no spend authority ([rationale](#tx)).
+- **Value range**: $0\leq v\leq v_\mathsf{max}$ in-circuit, with
+  $v_\mathsf{max}=2.1\times10^{15}$ zatoshi (`MAX_MONEY`): non-negative as in
+  Ironwood; zero-value outputs are legal (e.g., carrying a memo with no
+  payment), while the upper bound keeps balance arithmetic overflow-free.
+- **Note commitment integrity**:
+  $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$, so the published commitment opens to
+  this note.
+- **Dummy tachygram integrity**: $\tg_\bot=H^{\cm_\bot}(r_\bot)$, where
+  $H^{\cm_\bot}$ is a domain-separated hash reserved for dummy commitments.
+- **Nonzero tachygrams**: $\cm\neq0$ and $\tg_\bot\neq0$.[^nonzero]
+- **Authorization**: $\alpha=\PRF(\cm\parallel\theta)$ and
+  $\rk=[\alpha]\G$, binding the validation key to the output note. The signing
+  key behind $\rk$ is $\alpha$ itself, so creating an output requires no spend
+  authority ([rationale](#tx)).
+
+The statement contains no anchor or epoch. Historical context neither changes an
+output nor affects its validity.
 
 [^nonzero]: Every published tachygram is constrained nonzero. Poseidon outputs
     hit zero only with negligible probability, but the explicit guard reserves
-    zero as a degenerate value: it keeps every accumulator factor $(X - \tg)$
+    zero as a degenerate value: it keeps every accumulator factor $(X-\tg)$
     non-trivial, and closes the zero-valued edge cases that tend to produce
     identity points in committed form, which in-circuit point representations
     cannot hold (a bug class already paid for once in the implementation).
 
-<a id="spend">**Spend Action Statement**</a>
+#### Spend Action Statement {#spend}
 
-A valid instance of a *Spend Action statement* assures that, given the public input:
+A valid instance of a *Spend Action statement* assures that, given the public
+input:
 
-- $e$: the spend (current) epoch
 - $\cv$: net value commitment
-- $\rk$: randomized proof validation key
-- $\nf_e, \nf_{e+1}$: the spend-time nullifiers, published as tachygrams
-- $\anchor$: the target anchor in epoch $e$
+- $\rk$: randomized spend-validation key
+- $\nf_e,\nf_{e+1}$: the spend-time nullifiers, published as tachygrams
+- $\anchor$: the target anchor, which uniquely implies the spend epoch
+  $e=\mathsf{Epoch}(\anchor)$
 
 the prover knows the secret witness:
 
-- $\mathsf{Note} := (\pk, v, \psi, \rcm)$: note opening
-- $(\ak, \nk)$: authorization key, nullifier key
+- $\mathsf{Note}:=(\pk,v,\psi,\rcm)$: note opening
+- $(\ak,\nk)$: authorization key and nullifier key
 - $e_\incl$: the note's inclusion epoch
-- a nonempty exclusion range $S=[s_0,e)$ with $s_0\leq e_\incl$
 - authenticated tachygram and anchor-chain history witnessing inclusion and
-  past nullifier exclusion
-- the randomizers $\alpha, \theta, \rcv$
+  every required past-nullifier exclusion
+- the randomizers $\alpha,\theta,\rcv$
 
 such that the following conditions hold:
 
-- **Value commitment integrity** ($\Uc$): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
-  spent value (value leaving the pool counts positively toward $v^\mathsf{bal}$,
-  per the [sign convention](#tx)).
-- **Value range** ($\Uc$): $0 \leq v \leq v_\mathsf{max}$, re-checked on the
-  witnessed note — its creating output already enforced the range, but the
-  redundant check is cheap defense in depth and keeps balance arithmetic
+- **Value commitment integrity**: $\cv=[v]\G+[\rcv]\H$, committing the spent
+  value (value leaving the pool counts positively toward $v^\mathsf{bal}$, per
+  the [sign convention](#tx)).
+- **Value range**: $0\leq v\leq v_\mathsf{max}$ is re-checked against the
+  witnessed note. Although its creating output already enforced this range, the
+  redundant check provides cheap defense in depth and keeps balance arithmetic
   overflow-free.
-- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$.
-- **Payment key integrity** ($\Uc$): $\pk = \mathsf{Com}(\ak, \nk)$.
-- **Spend Authority** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
-  $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validating key to the note.
-- **Commitment Inclusion**: $\cm$ occurs in a creation stamp in epoch
-  $e_\incl\leq e$, with its ancestry established across the named anchors:
-  - **Creation membership** ($\Uc$): $\cm$ is a member of the creation stamp's
+- **Note commitment integrity**: $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$.
+- **Payment key integrity**: $\pk=\mathsf{Com}(\ak,\nk)$.
+- **Spend Authority**: $\alpha=\PRF(\cm\parallel\theta)$ and
+  $\rk=\ak+[\alpha]\G$, binding the validation key to the note.
+- **Commitment Inclusion**: $\cm$ occurs in an *authenticated* creation stamp in
+  epoch $e_\incl\leq e$:
+  - **Creation membership**: $\cm$ is a member of the creation stamp's
     [accumulator](#acc), i.e. $f^\tg(\cm)=0$.
-  - **Inclusion-block ancestry** ($\Uc$): the creation stamp is absorbed into
-    the [anchor chain](#anchor), whose remaining updates in that block reach the
-    inclusion anchor.
-  - **Inclusion-epoch ancestry** ($\Uc$): when $e_\incl<e$, the inclusion anchor
-    advances to the join anchor $\sntl_{e_\incl+1}$.
-  - **Past-epoch ancestry** ($\Uc/\Oc$): when $e_\incl<e$, the join anchor is an
-    authenticated ancestor of the exclusion anchor $\sntl_e$.
-  - **Target ancestry** ($\Uc$): when $e_\incl<e$, the exclusion anchor is an
-    ancestor of the target $\anchor$ within epoch $e$.
-  - **Same-epoch path** ($\Uc$): when $e_\incl=e$, the inclusion anchor instead
-    is an ancestor of the target $\anchor$; the join and exclusion paths are not
-    needed to establish inclusion.
-- **Past Nullifier Exclusion** (until $e-1$): for every $i\in S=[s_0,e)$,
-  where $s_0\leq e_\incl$:
-  - **Nullifier derivation** ($\Uc$): $\nf_i=f_k(i)$ for
-    $k=\mathsf{KDF}(\nk,\psi)$.
-  - **Epoch-history integrity** ($\Sc$): the epoch accumulator $e_i(X)$ is the
-    exact product of the tachygrams absorbed by the authenticated anchor-chain
-    segment from $\sntl_i$ to $\sntl_{i+1}$.
-  - **Nullifier consistency** ($\Uc+\Oc$): the value tested against epoch $i$ is
-    the same $\nf_i$ derived for that position.
-  - **Epoched nonmembership** ($\Oc$): $e_i(\nf_i)\neq0$. The
-    [QR-filter trick](#qr-trick) is an orthogonal refinement of this test.
-- **Spend-time Nullifier Integrity** ($\Uc$): $\nf_e, \nf_{e+1}$ are this note's
+  - **Creation stamp integrity**: an authenticated [anchor-chain](#anchor)
+    history links the creation stamp to the target $\anchor$.
+- **Past Nullifier Exclusion**: within the relevant historical range, past
+  nullifiers never appear on chain and therefore never belong to a historical
+  tachygram accumulator. This range begins at the end-of-block anchor of the
+  note's inclusion block and ends at the starting sentinel $\sntl_e$ of the
+  spending epoch. For every epoch $i$ intersected by this anchor range:
+  - **Past nullifier derivation**: $k=\mathsf{KDF}(\nk,\psi)$ and
+    $\nf_i=f_k(i)$.
+  - **Nullifier nonmembership**: every tachygram accumulator committed by an
+    anchor in the epoch-$i$ portion of this range evaluates nonzero at $\nf_i$.
+  - **Tachygram accumulator integrity**: every tachygram accumulator used in a
+    nonmembership test is committed as part of the authenticated anchor-chain
+    history.
+- **Spend-time Nullifier Integrity**: $\nf_e$ and $\nf_{e+1}$ are this note's
   [nullifiers](#nf) at epochs $e,e+1$, derived from
-  $k=\mathsf{KDF}(\nk,\psi)$ and so bound to $\cm$; both constrained
+  $k=\mathsf{KDF}(\nk,\psi)$ and therefore bound to $\cm$; both are constrained
   nonzero.[^nonzero]
 
-Consensus separately validates $\anchor$ against canonical history and checks
-the active epoch from its live tachygram window.
+#### Bundle-level Statement {#bundle}
 
-<a id="bundle">**Bundle-level Statement**</a>
+The bundle statement glues the per-action statements together. Given the public
+input:
 
-The bundle statement glues the per-action statements together. Given the public input:
-
-- $e$: the target epoch
-- $\anchor$: the common target anchor in $e$
-- $\set{(\cv_i, \rk_i)}$: the list of [Action descriptions](#tx)
-- $\set{\tg_i}$: the associated tachygram multiset of the bundle, two tachygrams
-  per action
-- $\tgacc$: their accumulator, a PCS commitment to $f^\tg(X) = \prod_i (X - \tg_i)$
+- $\anchor$: the common target anchor, which implies the target epoch;
+- $\set{(\cv_i,\rk_i)}$: the list of [Action descriptions](#tx);
+- $\set{\tg_i}$: the associated tachygram multiset, two tachygrams per action;
+  and
+- $\tgacc$: their accumulator, a PCS commitment to
+  $f^\tg(X)=\prod_i(X-\tg_i)$,
 
 it attests that:
-
-- **Per-action satisfiability**: every action's [Spend](#spend) or [Output](#output)
-  statement holds, and the tachygrams it emits
-  ($\nf_e, \nf_{e+1}$ for a spend; $\cm, \tg_\bot$ for an output) are exactly those
-  collected in $\set{\tg_i}$.
-- **Accumulator integrity** ($\Uc$): $\tgacc$ commits to
-  $f^\tg(X)=\prod_i(X-\tg_i)$ for the published multiset $\set{\tg_i}$.
-
-The value balance, anchor validity, and authorization signatures are enforced
-*outside* this statement: respectively the [binding signature](#tx), a
-[consensus check](#consensus-rule), and signature verification against $\rk$.
 
 #### Steps, Headers, and Bridging
 
@@ -1478,6 +1427,23 @@ proves the supplied nullifiers absent from every whole epoch in $S=[s_0,e)$ and
 authenticates the sentinel-to-sentinel chain through the exclusion anchor
 $\sntl_e$. For an older note, it records the join anchor at the end of
 $e_\incl$. The range may begin earlier for camouflage.
+- **Per-action satisfiability**: every [Spend](#spend) statement holds at the
+  common target $\anchor$, and every [Output](#output) statement holds.
+- **Action-description integrity**: the public action-description list is
+  exactly the descriptions emitted by those statements, in wire order.
+- **Tachygram association**: each action contributes exactly its statement's
+  pair—$(\nf_e,\nf_{e+1})$ for a spend or $(\cm,\tg_\bot)$ for an output—and
+  these pairs form exactly the published multiset $\set{\tg_i}$.
+- **Accumulator integrity**: $\tgacc$ commits to
+  $f^\tg(X)=\prod_i(X-\tg_i)$ for exactly the published multiset
+  $\set{\tg_i}$.
+
+The value-balance check, authorization signatures, and canonical target-anchor
+check remain outside the PCD statement. For an output-only bundle, the prover
+supplies the target $\anchor$ directly; no output claim is made historical,
+and consensus performs the same canonical-anchor check.
+
+### Proof Tree {#prooftree}
 
 <p align="center">
   <a href="./assets/step_range.svg">
