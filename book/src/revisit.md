@@ -771,9 +771,10 @@ leaves the format unchanged even through a full [quantum upgrade](#pq).
 ### Anchor Chain {#anchor}
 
 An anchor chain is a hash chain whose updates absorb **per-stamp**
-[tachygram-accumulator](#acc) commitments. Every stamp carries a $\tgacc$ committing to the
-tachygrams it introduces: those of a single bundle for a standalone transaction
-(a *Tachyon autonome*), or the union across many for an [aggregate](#tx).
+[tachygram accumulator](#acc) commitments. Every stamp carries a $\tgacc$
+committing to the tachygrams it introduces: those of a single bundle for a
+standalone transaction (a *Tachyon autonome*), or their union across many
+transactions for an [aggregate](#tx).
 Each chain state (the $\anchor$ field in each block header) is an **anchor**;
 $\tgacc$ itself is not an anchor, but a state delta to compute the next anchor.
 A stamp in consensus epoch $i$ extends the chain as
@@ -804,7 +805,7 @@ zero, the genesis anchor-chain state replaces $\anchor_{-1,\mathsf{end}}$.
 
 Every canonical anchor therefore determines a unique epoch: $\sntl_i$ and all
 ordinary anchors after it but before $\sntl_{i+1}$ belong to epoch $i$. We write
-$\mathsf{Epoch}(\anchor)$ for this value and assume validator implements this
+$\mathsf{Epoch}(\anchor)$ for this value and assume validators implement this
 map efficiently.
 
 <P align="center">
@@ -812,8 +813,8 @@ map efficiently.
 </p>
 
 The chain therefore advances at *sub-block, above-transaction* granularity: in a
-block of transactions with all standalone Tachyon bundles it ticks once per
-transaction. A published stamp carries a target $\anchor$. As with
+block containing only standalone Tachyon bundles, it ticks once per transaction.
+A published stamp carries a target $\anchor$. As with
 Orchard anchors today, validators maintain the (unpruned) anchor chain and are
 responsible for validating the stamp's $\anchor$ against the canonical history.
 When consensus accepts the stamp, its $\tgacc$ is absorbed into the current state
@@ -826,8 +827,8 @@ $\tgacc$ whose correctness is [batch-verified in circuit](#acc-correct), so a
 validator merely hashes it into the chain. A per-block anchor would instead force
 every validator to rebuild a block-wide accumulator from scratch: re-accumulating
 every tachygram in the block, interpolating the product polynomial, and
-committing it which involves an expensive multi-scalar multiplication for some PCS
-choices.
+committing to it, which involves an expensive multi-scalar multiplication for
+some PCS choices.
 
 Per-stamp cadence also raises concerns about the cost of generating exclusion
 proofs. To prove $\nf_e$ never appeared in epoch $e$, a user could naively show
@@ -835,7 +836,7 @@ $f^\tg(\nf_e) \neq 0$ against the accumulator of *every* stamp folded into the
 chain that epoch. Instead, we leverage the [multiset union](#union) operation
 on our accumulator polynomials to collapse the per-stamp checks into one.
 The product of all stamp polynomials in an epoch is itself an accumulator over
-all tachygrams of that epoch — the <a id="epoch-acc">*epoch accumulator*</a> $e(X)$:
+all tachygrams of that epoch — the epoch accumulator $e(X)$:
 
 $$
 \underbrace{\circ \overset{f^\tg_1(X)}{\longrightarrow} \circ
@@ -849,54 +850,57 @@ polynomials $f_i^\tg(X)$ whose commitments
 $\tgacc_i=\mathsf{Com}(f_i^\tg(X))$ were absorbed into the anchor chain, by showing
 $e(r) \iseq \prod_i{f^\tg_i(r)}$ using the proof system's cheap polynomial-oracle
 queries[^polyoracle]. Since the queries are served natively by the folding scheme
-and not through a step circuit, $e(X)$ may have degree as large as the SRS of the PCS
-allows, independent of any per-PCD-step-circuit size limit. Admittedly, the prover
-cost is still linear in the epoch's stamp count, but it is paid *once* and then
-**amortized**. The epoch accumulator $e(X)$, carrying its correctness proof, can
-now be reused by every unspent note to directly test the exclusion of their
-epoched nullifiers.
+and not through a step circuit, $e(X)$ may have as high a degree as the PCS SRS
+allows, independent of any per-PCD-step-circuit size limit. Admittedly, the
+prover cost is still linear in the epoch's stamp count, but it is paid *once* and
+then *amortized*. The epoch accumulator $e(X)$, carrying its correctness proof,
+can now be reused to test each unspent note's epoched nullifier directly.
 
 Sentinel transitions absorb no tachygram-accumulator commitment and therefore
 contribute no factor to $e(X)$. For an empty epoch $i$, $e_i(X)=1$; the distinct
 endpoint anchors $\sntl_i,\sntl_{i+1}$ still certify that the whole epoch was
 traversed.
 
-> Note: whether Ragu would support an epoch accumulator $e(X)$ of high degree
-> depends on concrete parameters like epoch duration, throughput, and PCS choice.
-> Ragu currently uses Bulletproof PCS with linear verifier, thus the maximum SRS
-> degree might be too small to cover all tachygrams in an epoch.
-> Nevertheless, the amortization technique above applies to the tachygram union
-> appeared in any segment of the anchor chain.
-
 This removes the per-stamp checks, but $e(X)$ still has degree linear in the
-total number of tachygrams in the epoch $N$. We now present an optimization
-trick that reduces the amortized per-nullifier cost to strictly sublinear.
+total number of tachygrams $N$ within an epoch. Even though Ragu theoretically
+supports high-degree polynomial oracles, they become practically infeasible: a
+modest throughput of $100$ TPS (all 2-input-2-output) and a two-week epoch would
+yield $N \gt 480{,}000{,}000$ tachygrams. With our Bulletproof PCS's linear-time
+verifier, transaction verification would take more than 16 minutes[^zkalc].
 
-#### Quadratic Residue Filters {#qr-trick}
+We now present an optimization that reduces the amortized per-nullifier cost
+to strictly sublinear, without maintaining or testing against any high-degree
+polynomials at all.
 
-> This subsection is an optional optimization. The base protocol can test the
-> exact accumulator of each history segment directly; QR filtering only reduces
-> the cost of large full-epoch segments.
+[^zkalc]: Estimate from [zka.lc](https://zka.lc/): MSM on $\G_1$ over
+    Pallas using Zcash's `pasta_curves` implementation on an AWS EC2
+    m5.2xlarge instance.
 
-Our goal: let a user prove non-membership of $\nf_e$ over an *entire epoch* at
-cost logarithmic in $N$, the number of tachygrams that epoch.
+### Quadratic Residue Filters {#qr}
+
+Our goal: prove non-membership of $\nf_e$ over an *entire epoch* at an amortized
+cost sublinear in $N$, the total number of tachygrams in epoch $e$.
 
 The idea is **bucketing**. Suppose we sort every tachygram into one of $2^k$
 buckets by a rule that (i) a nullifier can cheaply prove it follows and (ii)
-splits the field evenly. Then $\nf_e$ falls into exactly one bucket, and it can
-only ever collide with the tachygrams sharing that bucket. Thus, non-membership
-across the whole epoch collapses to non-membership against a *single* bucket's
-accumulator, holding only $\approx N/2^k$ entries. Taking $k = \log N - \log\log N$
-shrinks each bucket to $\approx \log N$ entries while keeping the query $O(\log N)$.
-Quadratic residues give us exactly such a rule.
+splits the field nearly evenly. Then $\nf_e$ falls into exactly one bucket, and
+it can only ever collide with the tachygrams sharing that bucket. Thus,
+non-membership across the whole epoch collapses to non-membership against a
+*single* bucket's accumulator, holding only $\approx N/2^k$ entries. To enforce a
+maximum bucket size $B$, we dynamically increase $k$ as needed and split any
+oversized bucket under another independent filter.
+Quadratic residues give us exactly such a rule to distribute $N$ tachygrams
+nearly evenly in expectation.
 
-**A number theory detour.** Over a prime field $\F$, the nonzero elements split
-perfectly in half: the *quadratic residues* ($\QR$) and the *non-residues* ($\NQR$).
+#### A number theory detour
+
+Over a prime field $\F$, the *nonzero* elements split perfectly in half:
+the *quadratic residues* ($\QR$) and the *non-residues* ($\NQR$).
 Both classes are cheap to test in-circuit:
 
 - $x \in \QR$: supply the root $y$ as advice; one constraint $y^2 = x$.
-- $x \in \NQR$: fix a public non-residue $c$ and supply $y$ with $y^2 = cx$,
-  since multiplying by a non-residue flips the class:
+- $x \in \NQR$: fix a public non-residue $c \in\NQR$ and supply $y$ with
+  $y^2 = cx$, since multiplying by a non-residue flips the class:
 
 $$
 \begin{cases}
@@ -907,128 +911,194 @@ $$
 
 A **QR filter** is one such split with a random offset: draw $R \sample \F$ and
 classify $x$ by whether $x + R$ is a square, assigning the exceptional value
-$x+R=0$ to the residue side. A random offset cuts any fixed epoch set roughly in
+$x=-R$ to the residue side. A random offset cuts any fixed epoch set roughly in
 half, and $k$ independent offsets $R_1, \ldots, R_k$ tag every element with a
 $k$-bit **QR profile** $\v{b} = (b_1, \ldots, b_k) \in \{0,1\}^k$, where $b_j=1$
-iff $x+R_j$ is a square (written $x\in\QR_{R_j}$), including zero, and $b_j=0$
-otherwise. The $k$ filters together sort the field into $2^k$ disjoint buckets
-of roughly equal expected size.
+iff $x+R_j$ is a square or zero (written as $x\in\QR_{R_j}$), and $b_j=0$
+otherwise (written as $x\in\NQR_{R_j}$). The $k$ filters together sort the field
+into $2^k$ disjoint buckets of roughly equal size in expectation.
 
-<a id="batch-qr">**Batched QR Test.**</a> Given the square-free vanishing
-polynomial $f(X)=\prod_i{(X-x_i)}$, we can batch-test that all roots are QR,
-namely $\forall x_i\in\QR$, as follows. Canonical epoch accumulators are
-square-free by the [consensus uniqueness rule](#consensus-rule).
-"Square-free" here means the multiplicity of each root is $1$, namely no repeated
-or duplicated $x_i$.
+#### Batched QR Test {#batch-qr}
+
+Given the square-free vanishing polynomial $f(X)=\prod_i{(X-x_i)}$, we can
+batch-test that all roots are QR, namely $\forall x_i\in\QR$, as follows.
+Canonical epoch accumulators are square-free by the [consensus uniqueness rule](#consensus-rule).
+"Square-free" here means that every root has multiplicity $1$: there are no
+repeated $x_i$.
 
 - Prover interpolates all QR pairs $(x_i, y_i)$ into a polynomial $g(X)$ where
-$g(x_i) = y_i$ and $x_i = y_i^2$
+  $g(x_i) = y_i$ and $x_i = y_i^2$.
 - Prover computes $h(X)=\frac{g(X)^2 - X}{f(X)}$ and sends commitments to $g(X)$
-and $h(X)$ to the Verifier
+  and $h(X)$ to the Verifier.
   - Observe that the numerator $g(X)^2 - X$ vanishes over all $x_i$ (since
-  $g(x_i)^2 = y_i^2 = x_i$), so $f(X)$ perfectly divides the numerator
-- Verifier samples a random $r\sample\F$, and test: $g(r)^2 - r \iseq f(r)\cdot h(r)$
+  $g(x_i)^2 = y_i^2 = x_i$), so $f(X)$ perfectly divides the numerator.
+- Verifier samples a random $r\sample\F$ and tests
+  $g(r)^2-r \iseq f(r)\cdot h(r)$.
 
-For an offset $R_j$, the corresponding identities replace $X$ by $X+R_j$.
-A residue sibling checks $g(X)^2-(X+R_j)=f(X)h(X)$. A non-residue sibling checks
-$g(X)^2-c(X+R_j)=f(X)h(X)$ and additionally interpolates the inverses into
-$z(X)$ and checks $(X+R_j)z(X)-1=f(X)q(X)$. The latter excludes zero from the
-non-residue side.
-
-**Building the buckets (once, by the OSS).** Fix
-$R_1,\ldots,R_k\sample\F$ as transparent system parameters. Conceptually, the
-buckets are the leaves of a binary tree built by recursively splitting the epoch
-accumulator by each filter. Splitting
-$e(X) = \prod_{j=1}^N (X - \tg_j)$ by $R_1$ gives
+For an offset $R$, the corresponding identities replace $X$ by $X+R$.
+The prover for a batched $\QR_R$ test would set $h(X)$ as:
 
 $$
-\begin{cases}
-q_0(X) = \prod_{\tg_i\in\NQR_{R_1}}{(X - \tg_i)}\\
-q_1(X) = \prod_{\tg_i\in\QR_{R_1}}{(X - \tg_i)}\\
-e(X) = q_0(X) \cdot q_1(X)
-\end{cases}
+h(X) = \frac{g(X)^2 - (X + R)}{\prod_i (X - x_i)}
+\qquad\text{where}\quad
+\forall x_i\in\QR_R
 $$
 
-so $q_1$ gathers the tachygrams passing the $R_1$ filter and $q_0$ its
-complement; bisecting each by $R_2$ gives four, and so on:
+Similarly, the prover for a batched $\NQR_R$ test would set $h(X)$ as:
 
 $$
-\begin{cases}
-q_{00}(X) = \prod_{\tg_i\in\NQR_{R_2} \,\cap\, \NQR_{R_1}}{(X - \tg_i)}\\
-q_{10}(X) = \prod_{\tg_i\in\QR_{R_2} \,\cap\, \NQR_{R_1}}{(X - \tg_i)}\\
-q_0(X) = q_{00}(X) \cdot q_{10}(X)
-\end{cases}
-\quad
-\begin{cases}
-q_{01}(X) = \prod_{\tg_i\in\NQR_{R_2} \,\cap\, \QR_{R_1}}{(X - \tg_i)}\\
-q_{11}(X) = \prod_{\tg_i\in\QR_{R_2} \,\cap\, \QR_{R_1}}{(X - \tg_i)}\\
-q_1(X) = q_{01}(X) \cdot q_{11}(X)
-\end{cases}
+h(X) = \frac{g(X)^2 - c\cdot (X + R)}{\prod_i (X - x_i)}
+\qquad\text{where}\quad
+c\in\NQR,\quad \forall x_i\in\NQR_R
 $$
 
-After $k$ filters we reach $2^k$ leaves, where leaf $q_{\v{b}}(X)$ holds exactly
-the tachygrams of profile $\v{b}$.
+#### QR Decomposition Test {#qr-decomp}
 
-In practice the OSS never splits top-down. It keeps the $2^k$ bucket accumulators
-live and streams tachygrams into them: as each new stamp lands, it computes the
-tachygram's profile $\v{b}$ and folds $(X-\tg)$ into the matching leaf
-$q_{\v{b}}$. Internal product nodes are formed bottom-up only when a
-decomposition proof calls for them. Maintaining the buckets costs $O(kN)$
-profile work and linear-factor insertions, amortized over all users and all
-nullifiers.
+With the [batched QR test](#batch-qr) above, we can construct an interactive
+oracle reduction from a QR decomposition instance to PCS evaluation instances.
 
-<P align="center">
-  <img src="./assets/qr_trick.svg" alt="qr_trick" />
+Define the QR decomposition relation for a square-free epoch accumulator as
+follows, where $c\in\NQR$ is a fixed public non-residue:
+
+$$
+\left\{ \left(
+\begin{aligned}
+    \mathtt{x} &:= \cm_e, \cm_{p_1}, \cm_{p_2} \in\G,\, R\in\F; \\
+\mathtt{w} &:= \{x_i\}\in\F^N
+\end{aligned}
+\right):\quad
+\begin{aligned}
+& p_1(X) = \prod_{x_i \in \QR_R} (X - x_i) \\
+& p_2(X) = \prod_{x_i \in \NQR_R} (X - x_i) \\
+& \cm_{p_1} = \mathsf{Com}(p_1(X)) \\
+& \cm_{p_2} = \mathsf{Com}(p_2(X)) \\
+& \cm_e = \mathsf{Com}(\prod_{i=0}^{N-1} (X - x_i))
+\end{aligned}
+\right\}
+$$
+
+The reduction works as follows:
+
+- Prover interpolates $g^\QR(X), g^\NQR(X)$ as:
+  $$
+  \begin{aligned}
+  g^\QR(x_i) &= y_i &\qquad\text{where }
+      \forall x_i \in \QR_R \,\land\, x_i + R = y_i^2\\
+  g^\NQR(x_i) &= y_i &\qquad\text{where }
+      \forall x_i \in \NQR_R \,\land\, c\cdot (x_i + R) = y_i^2
+  \end{aligned}
+  $$
+- Prover computes $h^\QR(X), h^\NQR(X)$ as:
+  $$
+  \begin{aligned}
+  h^\QR(X) &= \frac{g^\QR(X)^2 - (X + R)}{p_1(X)} \\
+  h^\NQR(X) &= \frac{g^\NQR(X)^2 - c\cdot (X + R)}{p_2(X)}
+  \end{aligned}
+  $$
+  Prover sends commitments of $g^\QR(X), g^\NQR(X), h^\QR(X), h^\NQR(X)$
+  to the Verifier.
+- Verifier samples a challenge $r\sample\F$, conducts the two quotient checks at
+  $r$, and checks $e(r)\iseq p_1(r)\cdot p_2(r)$. This reduces to PCS evaluation
+  claims on $7$ polynomials at the same evaluation point $r$.
+- Verifier also opens $p_2$ at the fixed point $-R$ and checks
+  $p_2(-R)\neq0$.
+
+The final check assigns the exceptional value $x=-R$, whose shift is zero, to
+$\QR_R$. The non-residue quotient identity alone cannot distinguish it: $y=0$
+would satisfy $y^2=c(x+R)=0$. Since $p_2$ is a product of linear factors,
+$p_2(-R)\neq0$ proves that $-R$ is absent from the proclaimed non-residue set.
+Together with $e(X)=p_1(X)\cdot p_2(X)$, this forces it into $p_1$ whenever it
+occurs.
+
+#### Incremental QR Tree {#iqt}
+
+Finally, we use these decompositions to build an incremental binary partition
+tree. Each leaf holds a set of tachygrams represented by a
+[tachygram accumulator](#acc), and an independent QR filter determines the
+branch at each depth. The tree grows only where needed: an oversized leaf is
+*decomposed on demand* under the next filter. Once that decomposition is
+certified, its parent accumulator, including the initial root, is pruned;
+only the current leaves remain materialized.
+
+We emphasize that both inclusion of note commitments and exclusion of past
+nullifiers can be tested against their corresponding leaf bucket.
+
+**Base case.**
+Let the maximum leaf/bucket size be $B=8{,}096$. The tree starts with one empty
+root leaf represented as:
+
+$$
+q_\root(X)=1.
+$$
+
+The first $8{,}096$ tachygrams remain unpartitioned and are appended directly to
+the root. To append a batch $T=\{\tg_i\}$, the OSS updates the root accumulator
+as
+
+$$
+q_\root'(X) = q_\root(X) \cdot \prod_{\tg_i\in T}(X-\tg_i).
+$$
+
+Once $\mathsf{Com}(q_\root'(X))$ is fixed, the update can be efficiently checked
+at a random point $r$.
+
+**Tree growth.**
+When an append overflows the root, i.e. $\deg(q_\root) > B$, the OSS applies the
+first QR filter with offset $R_0$. It partitions the root's tachygrams by their
+first profile bit:
+
+$$
+\begin{aligned}
+q_0(X) &= \prod_{\tg_i\in\NQR_{R_0}}(X-\tg_i),\\
+q_1(X) &= \prod_{\tg_i\in\QR_{R_0}}(X-\tg_i).
+\end{aligned}
+$$
+
+The [QR decomposition test](#qr-decomp) proves the QR-class purity of both
+buckets and the complete decomposition
+$q_\root(X)=q_0(X)\cdot q_1(X)$. Once the decomposition proof is folded into the
+root-construction PCD proof, the OSS can discard the root and retain only $q_0$
+and $q_1$.
+
+Later appends are routed directly to the leaf selected by their QR profiles.
+Tree growth remains local: when one leaf exceeds $B$, only that leaf is decomposed
+under the independent filter for the next depth. For example, if $q_1$ overflows
+while $q_0$ does not, the OSS splits it under the independent offset $R_1$ into
+$q_{10}(X)$ and $q_{11}(X)$.
+The resulting tree is lopsided, with three materialized leaves:
+
+<p align="center">
+  <a href="./assets/qr_tree.svg">
+    <img src="./assets/qr_tree.svg" alt="Simple QR tree example" />
+  </a>
 </p>
 
-With the buckets maintained, a user proves $\nf_e$ absent from the *entire epoch*
-in three parts:
+<a id="qr-filters">**QR Filter Sampling.**</a>
+To avoid griefing attacks where a malicious user grinds the note commitments to
+overflow a bucket, resulting in an extremely lopsided QR tree, we
+deterministically derive QR filters from chain entropy at the end of the epoch.
+In particular, we recommend iteratively hashing $\sntl_{e+1}$ to derive the QR
+filters for epoch $e$:
 
-1. **Profile.** Compute $\nf_e$'s QR profile $\v{b}$ ($k$ squaring constraints)
-   pinning down the single leaf $q_{\v{b}}$ it could possibly belong to.
-2. **Leaf non-membership.** Test $q_{\v{b}}(\nf_e) \neq 0$ against that one leaf,
-   of expected degree $N/2^k$.
-3. **Path decomposition.** Certify that $q_{\v{b}}$ is genuinely the
-   profile-$\v{b}$ bucket of the epoch accumulator $e(X)$, by walking the
-   root-to-leaf path and checking, at each level $j$, two things:
-   - *product relation*: the on-path parent equals the product of its two children,
-   tested at a random point as in the [accumulator correctness check](#acc-correct);
-   - *sibling QR purity*: the *off-path* sibling is pure in its QR class with
-     respect to $R_j$, using the shifted [batched QR identities](#batch-qr)
-     above.[^sibling]
+$$
+R_i := H^{i}(\sntl_{e+1}) = \underbrace{H(\ldots H}_{i \text{ times}}(\sntl_{e+1})\ldots)
+$$
 
-[^sibling]: Why the sibling test, and why only one per level? The product checks
-    alone are not enough: a cheating OSS could hide a tachygram equal to $\nf_e$
-    by misfiling it into the *sibling* subtree, leaving the user's leaf test to
-    wrongly report absence. Sibling purity shuts this down. If the off-path
-    sibling provably holds only elements of the opposite class at level $j$, then
-    every on-path-class element of the parent is forced into the on-path child —
-    it has nowhere else to go. Chaining this down all $k$ levels pins every
-    profile-$\v{b}$ element of $e(X)$, in particular any occurrence of $\nf_e$,
-    into the leaf $q_{\v{b}}$. Hence $e(\nf_e) = 0 \iff q_{\v{b}}(\nf_e) = 0$, and
-    a passing leaf test certifies epoch-wide exclusion. Constraining only the
-    sibling is enough: purity of the off-path side already captures all
-    on-path-class elements, and a stray wrong-class element that leaks *into* the
-    on-path child can at worst make an honest exclusion proof fail (a false
-    positive), never admit a double-spend (a false negative).
+These QR filters are unpredictable and negligibly manipulable, yet
+deterministically derivable without extra communication or consensus state once
+the epoch ends.
 
-The decomposition certifies $q_{\v{b}}$ only *relative to* $e(X)$. Full soundness also
-needs $e(X)$ to be canonical: the correct product of the per-stamp accumulator
-polynomials whose commitments $\tgacc_i$ were absorbed into the anchor chain.
-That is the separate [epoch-accumulator correctness](#epoch-acc) proof from above.
+**Cost.**
+The primary cost is verifiably constructing one incremental QR tree per epoch.
+OSSs undertake this work by stream-processing all tachygram accumulators in the
+epoch's authenticated anchor chain, producing PCD proofs for every leaf, and
+sharing them with the community. The cost of proving leaf integrity is therefore
+amortized.
 
-**Cost.** Each level adds one product check and one batched QR test, each settled
-by $O(1)$ random-point evaluations, so the path is $O(k)$; the leaf test adds work
-proportional to its degree $N/2^k$. Setting $2^k = N/\log N$, i.e.
-$k = \log N - \log\log N$, balances the two — leaves hold $\approx \log N$
-tachygrams and the path is $\approx \log N$ levels deep — for an $O(\log N)$
-per-nullifier proof, strictly sublinear. (Pushing $k$ all the way to $\log N$
-would shrink leaves to $O(1)$, but the $O(k)$ path cost still dominates at
-$O(\log N)$ while the bucket count doubles, so nothing is gained.) This
-per-nullifier cost sits *on top of* the OSS's one-time epoch work: maintaining the
-buckets ($O(kN)$) and proving $e(X)$ canonical. Both the path-decomposition proofs
-(shared by everyone whose nullifier lands in the same bucket) and the $e(X)$
-proof (shared by all) are paid once and amortized across the epoch.
+An individual tachygram (non-)membership test constrains its QR profile at a cost
+of $O(\log(N/B))$ and makes one polynomial query against an accumulator of degree
+at most $B$. With fixed $B=8{,}096$, the overall cost is $O(\log N)$ per
+tachygram (non-)membership test.
 
 ### Transaction Life Cycle {#txflow}
 
