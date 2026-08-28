@@ -270,7 +270,7 @@ $$
 $$
 
 For example, if a user wants to cover epoch $\{5,6\}$ with a sponge rate of
-$\mathsf{Rate}=4$, she would delegate the range $S=[5,7)$, a subsequence of
+$\mathsf{Rate}=4$, she would delegate the range $S=[5,7)$, a subrange of
 local derivation range $R=[4,8)$ realized by a single Poseidon squeeze:
 $\nf_4, \ldots, \nf_7 = \mathsf{Poseidon}^\nf.\mathsf{Permute}
 (\nk, \psi, \lfloor 6/4 \rfloor = 1)$.
@@ -290,9 +290,9 @@ This primitive provides three properties:
   its nullifier $\nf_i$.
 - **Incremental range extension.** The commitment can be incrementally built and
   updated without fixing the range endpoint in advance.
-- **Subsequence proof.** Given commitments to two nullifier lists where one
-  is a subsequence of the other (prefix being a special case), the prover can
-  succinctly prove their subsequence relation.
+- **Indexed-subset proof.** Given commitments to two nullifier ranges, the
+  prover can succinctly prove that every indexed value in one occurs in the
+  other. Range counters separately enforce order and contiguity.
 
 The natural candidate is a vector commitment (VC) scheme that supports subvector
 opening and updatability (cf a
@@ -312,9 +312,10 @@ $(i,\nf_i)$, proves each $\nf_i$ absent from all tachygrams appeared in the past
 epoch $i$, and commits to the epoched nullifiers for which it has tested
 non-membership. Both the wallet and the OSS compute their nullifier commitment
 incrementally because both nullifier derivations and non-membership tests span
-across multiple PCD steps. The wallet then proves that the OSS-tested list is a
-subsequence of its locally derived list. This binds the delegated exclusion proof
-back to the note without revealing the note or any linkable info to the OSS.
+across multiple PCD steps. The wallet then proves that the OSS-tested indexed set
+is contained in its locally derived range. This binds the delegated exclusion
+proof back to the note without revealing the note or any linkable information to
+the OSS.
 
 <P align="center">
   <img src="./assets/nf_commit.svg" alt="nf_commit" />
@@ -333,8 +334,8 @@ $$
 
 Encoding both the absolute epoch index $i$ and its nullifier $\nf_i$ in each
 factor provides both positional and value binding. It allows us to sidestep
-traditional vector commitments and **collect the sequence as a multiset of
-indexed values** which has much easier subset/subsequence proof.
+traditional vector commitments and collect the range as an **indexed multiset**,
+which admits a simple subset proof.
 
 The wallet begins at an arbitrary epoch $r_0$. For a consecutive range
 $R=[r_0,r_0+n)$ it derives the corresponding nullifiers and commits to
@@ -367,39 +368,44 @@ g_S(X):=\prod_{i\in S} F_{i,\nf_i}(X)
 $$
 
 To bind the delegated work back to the note, the wallet proves that every
-OSS-tested $\nf_i$ occurs in its locally derived nullifier list. This
-*subsequence relation* is enforced via the standard quotient argument: by the
-existence of a quotient $q(X)$ such that:
+OSS-tested $(i,\nf_i)$ occurs in its locally derived range. This indexed-subset
+relation is enforced via the standard quotient argument: there must exist a
+quotient $q(X)$ such that
 
 $$
 g_R(X)=g_S(X)\cdot q(X).
 $$
 
-In fact, this divisibility ensures a general subsequence relation: $S$ needs not
-to be prefix or even a contiguous sub-range of $R$.
+The commitments to $g_R$, $g_S$, and $q$ are fixed before the oracle challenge
+$r\sample\F$, after which the verifier checks $g_R(r)=g_S(r)\cdot q(r)$.
 
-**Soundness sketch.** The binding property of this commitment comes from the
-irreducibility of each factor, because for divisibility to imply unique
-factorization, we need each factor to be irreducible. Take $Y = (aX + b)$,
-$F(Y)=Y^3 - c$ is irreducible over $\F$ because $c$ is chosen to be a non cubic
-residue. Setting $a = i+1$ further ensures $a\neq 0$. There is a rare chance of
-$F_{a,b}(X)$ not being injective:
+Divisibility itself is commutative and therefore proves only indexed-multiset
+inclusion; it *does not prove order*. Looking ahead, PCD steps in our [proof
+tree](#proof-tree) that build $g_S$ separately forces $S$ to be a contiguous
+increasing epoch range by checking its counter and sentinel endpoints at every step.
+
+**Soundness sketch.** For Pasta scalar field $\F_p$, we know $p=1\pmod 3$, thus
+we can fix $c=2$ as a public non-cube. Then $Y^3-c$ is irreducible over $\F$,
+and so is its image under every invertible affine substitution $Y=aX+b$. For a
+valid epoch $0\leq i<2^{32}$, we have $a=i+1\neq0$ in $\F$.
+With unique factorization, there is only a rare chance left for indexed-subset
+forgery: when $F_{a,b}(X)$ is not injective:
 
 $$
 \begin{cases}
 a_1 = \omega\, a_2 \\
 b_1 = \omega\, b_2 \\
 \omega^3 = 1
-\end{cases}\Longrightarrow
+\end{cases}\Longleftrightarrow
 (a_1\,X + b_1)^3 = (a_2\,X + b_2)^3 \quad\text{over }\F_p
 $$
 
-But since our epoch range is small $i\in \{0,1\}^{32} \ll F_p$ and the unit cubic
-root $\omega$ is very large, such coincidence will never occur. Even though we
-didn't explicitly enforce $i$'s range in circuit, we do enforce its increment as
-the user or the OSS incrementally builds $g_R(X)$ and $g_S(X)$. Additionally,
-an out-of-range $i$ will result in invalid [anchor](#anchor) values in the final
-proof; thus indirectly rejected.
+But since our epoch range is small $i\in \{0,1\}^{32} \ll F_p$ and the nontrivial
+cubic root of unity $\omega$ is very large, such coincidence will never occur.
+Even though we didn't explicitly enforce $i$'s range in circuit, we do enforce
+its increment as the user or the OSS incrementally builds $g_R(X)$ and $g_S(X)$.
+Additionally, an out-of-range $i$ will result in invalid [anchor](#anchor) values
+in the final proof; thus indirectly rejected.
 
 #### Nullifier Security {#nf-sec}
 
@@ -899,8 +905,8 @@ the *quadratic residues* ($\QR$) and the *non-residues* ($\NQR$).
 Both classes are cheap to test in-circuit:
 
 - $x \in \QR$: supply the root $y$ as advice; one constraint $y^2 = x$.
-- $x \in \NQR$: fix a public non-residue $c \in\NQR$ and supply $y$ with
-  $y^2 = cx$, since multiplying by a non-residue flips the class:
+- $x \in \NQR$: fix a public quadratic non-residue $c \in\NQR$ and supply $y$
+  with $y^2 = cx$, since multiplying by a non-residue flips the class:
 
 $$
 \begin{cases}
