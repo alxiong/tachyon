@@ -1670,8 +1670,12 @@ to reinitialize $\mathtt{Spendable}$ directly at this sentinel than to lift its
 old inclusion anchor through an ad hoc partial range.
 
 $\mathsf{SpendableReinit}$ first bridges the two inclusion-epoch headers. It
-checks that $\mathtt{AnchorChain}$ and $\mathtt{Tachygrams}$ cover the same
-sentinel-bounded epoch and reopens the note to recompute $\cm$ and
+requires equality of their left sentinel endpoints and equality of their right
+sentinel endpoints, so $\mathtt{AnchorChain}$ and $\mathtt{Tachygrams}$ cover the
+same epoch $e_\incl$. Their QR parameters and profiles remain independent because
+they answer different queries. The step reopens one note and enforces
+$\pk=\mathsf{Com}(\ak,\nk)$,
+$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$, and
 $k=\mathsf{KDF}(\nk,\psi)$. It then derives $\nf_{e_\incl}$, computes and
 constrains its [QR profile](#iqt), checks that it equals the supplied
 $\mathtt{Tachygrams}$ leaf's profile, and checks
@@ -1680,7 +1684,8 @@ against the corresponding certified tachygram leaf. Separately, it proves $\cm$
 belongs to the witnessed creation-stamp accumulator and uses the
 $\mathtt{AnchorChain}$ evidence to authenticate that stamp's resulting anchor:
 it recomputes $\anchor_\mathsf{create}$ from the same accumulator commitment,
-computes the anchor's profile, checks equality with the leaf profile, and proves
+computes the anchor's profile, checks equality with the supplied
+$\mathtt{AnchorChain}$ leaf's own profile, and proves
 $q^\anchor_{\v{b}}(\anchor_\mathsf{create})=0$. The
 membership check proves creation in epoch $e_\incl$; the nullifier
 non-membership check proves the note remained unspent through the rest of that
@@ -1730,8 +1735,8 @@ flowchart TB
 ```
 
 $\mathsf{NullifierDerive}$ has an explicit base and continuation relation. The
-base reopens one note, recomputes $\cm$ and $k=\mathsf{KDF}(\nk,\psi)$,
-and emits
+base reopens one note, enforces $\pk=\mathsf{Com}(\ak,\nk)$, recomputes
+$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and $k=\mathsf{KDF}(\nk,\psi)$, and emits
 
 $$
 \mathtt{Nullifiers}\{\cm,k,r_0,0,\mathsf{Com}(1)\}.
