@@ -918,6 +918,10 @@ iff $x+R_j$ is a square or zero (written as $x\in\QR_{R_j}$), and $b_j=0$
 otherwise (written as $x\in\NQR_{R_j}$). The $k$ filters together sort the field
 into $2^k$ disjoint buckets of roughly equal size in expectation.
 
+For a claimed non-residue bit, the circuit must also prove $x+R_j\neq0$, for
+example with an inverse witness. Otherwise $x=-R_j$ could incorrectly take the
+non-residue branch with square root zero.
+
 #### Batched QR Test {#batch-qr}
 
 Given the square-free vanishing polynomial $f(X)=\prod_i{(X-x_i)}$, we can
@@ -957,13 +961,13 @@ $$
 With the [batched QR test](#batch-qr) above, we can construct an interactive
 oracle reduction from a QR decomposition instance to PCS evaluation instances.
 
-Define the QR decomposition relation for a square-free epoch accumulator as
+Define the QR decomposition relation for any square-free accumulator as
 follows, where $c\in\NQR$ is a fixed public non-residue:
 
 $$
 \left\{ \left(
 \begin{aligned}
-    \mathtt{x} &:= \cm_e, \cm_{p_1}, \cm_{p_2} \in\G,\, R\in\F; \\
+    \mathtt{x} &:= \cm_p, \cm_{p_1}, \cm_{p_2} \in\G,\, R\in\F; \\
 \mathtt{w} &:= \{x_i\}\in\F^N
 \end{aligned}
 \right):\quad
@@ -972,7 +976,7 @@ $$
 & p_2(X) = \prod_{x_i \in \NQR_R} (X - x_i) \\
 & \cm_{p_1} = \mathsf{Com}(p_1(X)) \\
 & \cm_{p_2} = \mathsf{Com}(p_2(X)) \\
-& \cm_e = \mathsf{Com}(\prod_{i=0}^{N-1} (X - x_i))
+& \cm_p = \mathsf{Com}(\prod_{i=0}^{N-1} (X - x_i))
 \end{aligned}
 \right\}
 $$
@@ -998,7 +1002,7 @@ The reduction works as follows:
   Prover sends commitments of $g^\QR(X), g^\NQR(X), h^\QR(X), h^\NQR(X)$
   to the Verifier.
 - Verifier samples a challenge $r\sample\F$, conducts the two quotient checks at
-  $r$, and checks $e(r)\iseq p_1(r)\cdot p_2(r)$. This reduces to PCS evaluation
+  $r$, and checks $p(r)\iseq p_1(r)\cdot p_2(r)$. This reduces to PCS evaluation
   claims on $7$ polynomials at the same evaluation point $r$.
 - Verifier also opens $p_2$ at the fixed point $-R$ and checks
   $p_2(-R)\neq0$.
@@ -1007,7 +1011,7 @@ The final check assigns the exceptional value $x=-R$, whose shift is zero, to
 $\QR_R$. The non-residue quotient identity alone cannot distinguish it: $y=0$
 would satisfy $y^2=c(x+R)=0$. Since $p_2$ is a product of linear factors,
 $p_2(-R)\neq0$ proves that $-R$ is absent from the proclaimed non-residue set.
-Together with $e(X)=p_1(X)\cdot p_2(X)$, this forces it into $p_1$ whenever it
+Together with $p(X)=p_1(X)\cdot p_2(X)$, this forces it into $p_1$ whenever it
 occurs.
 
 #### Incremental QR Tree {#iqt}
@@ -1017,35 +1021,32 @@ tree. Each leaf holds a set of tachygrams represented by a
 [tachygram accumulator](#acc), and an independent QR filter determines the
 branch at each depth. The tree grows only where needed: an oversized leaf is
 *decomposed on demand* under the next filter. Once that decomposition is
-certified, its parent accumulator, including the initial root, is pruned;
-only the current leaves remain materialized.
+certified, its parent accumulator, including the initial root, is pruned; only
+the current leaves remain materialized.
 
-We emphasize that both inclusion of note commitments and exclusion of past
-nullifiers can be tested against their corresponding leaf bucket.
+Both inclusion of note commitments and exclusion of past nullifiers can then be
+tested against their corresponding leaf bucket.
 
-**Base case.**
-Let the maximum leaf/bucket size be $B=8{,}096$. The tree starts with one empty
-root leaf represented as:
+**Base case.** Let the maximum leaf size be $B=8{,}096$. The tree starts with
+one empty root leaf:
 
 $$
 q_\root(X)=1.
 $$
 
-The first $8{,}096$ tachygrams remain unpartitioned and are appended directly to
-the root. To append a batch $T=\{\tg_i\}$, the OSS updates the root accumulator
-as
+The first $B$ tachygrams remain unpartitioned and are appended directly to the
+root. To append a bounded batch $T=\{\tg_i\}$, update
 
 $$
 q_\root'(X) = q_\root(X) \cdot \prod_{\tg_i\in T}(X-\tg_i).
 $$
 
-Once $\mathsf{Com}(q_\root'(X))$ is fixed, the update can be efficiently checked
-at a random point $r$.
+Once $\mathsf{Com}(q_\root')$ is fixed, the update is checked at a random point.
+Bounding each append batch ensures that the first overflowing accumulator is
+only a bounded amount larger than $B$.
 
-**Tree growth.**
-When an append overflows the root, i.e. $\deg(q_\root) > B$, the OSS applies the
-first QR filter with offset $R_0$. It partitions the root's tachygrams by their
-first profile bit:
+**Tree growth.** When an append overflows the root, the OSS applies the first
+filter $R_0$ and partitions its tachygrams by their first profile bit:
 
 $$
 \begin{aligned}
@@ -1054,18 +1055,22 @@ q_1(X) &= \prod_{\tg_i\in\QR_{R_0}}(X-\tg_i).
 \end{aligned}
 $$
 
-The [QR decomposition test](#qr-decomp) proves the QR-class purity of both
-buckets and the complete decomposition
-$q_\root(X)=q_0(X)\cdot q_1(X)$. Once the decomposition proof is folded into the
-root-construction PCD proof, the OSS can discard the root and retain only $q_0$
-and $q_1$.
+The [QR decomposition test](#qr-decomp) proves the purity of both buckets and
+the complete decomposition $q_\root(X)=q_0(X)q_1(X)$. Once that proof is folded
+into the construction, the root can be discarded.
 
-Later appends are routed directly to the leaf selected by their QR profiles.
-Tree growth remains local: when one leaf exceeds $B$, only that leaf is decomposed
-under the independent filter for the next depth. For example, if $q_1$ overflows
-while $q_0$ does not, the OSS splits it under the independent offset $R_1$ into
-$q_{10}(X)$ and $q_{11}(X)$.
-The resulting tree is lopsided, with three materialized leaves:
+After a split, each child inherits its parent's covered-stream endpoint and can
+be extended independently on demand. Extending one terminal leaf processes the
+next contiguous source segment and appends exactly the values whose profiles
+match that leaf; non-matching values still have to be processed so the leaf's
+new endpoint covers the whole segment. The append relation must constrain every
+new value's profile, since checking only the accumulator product would allow a
+dishonest builder to omit or misfile a matching value. Other leaves need not be
+advanced until they are requested.
+
+When one leaf exceeds $B$, only that leaf is decomposed under the next
+independent filter. For example, if $q_1$ overflows while $q_0$ does not,
+splitting it under $R_1$ yields $q_{10}$ and $q_{11}$:
 
 <p align="center">
   <a href="./assets/qr_tree.svg">
@@ -1074,31 +1079,24 @@ The resulting tree is lopsided, with three materialized leaves:
 </p>
 
 <a id="qr-filters">**QR Filter Sampling.**</a>
-To avoid griefing attacks where a malicious user grinds the note commitments to
-overflow a bucket, resulting in an extremely lopsided QR tree, we
-deterministically derive QR filters from chain entropy at the end of the epoch.
-In particular, we recommend iteratively hashing $\sntl_{e+1}$ to derive the QR
-filters for epoch $e$:
+To make the filters unpredictable while the epoch's tachygrams are chosen, derive
+them from chain entropy fixed at the end of the epoch, for example by iteratively
+hashing $\sntl_{e+1}$. Construction therefore begins after the epoch closes and
+replays its authenticated history as a bounded stream. Here *incremental* refers
+to that streaming construction, not to maintaining the final tree online during
+the epoch. This argument assumes the chosen chain entropy is sufficiently hard
+to bias.
 
-$$
-R_i := H^{i}(\sntl_{e+1}) = \underbrace{H(\ldots H}_{i \text{ times}}(\sntl_{e+1})\ldots)
-$$
+**Queries and cost.** We assume the service supplies a leaf for the intended
+ending anchor. Its proof attests that it contains exactly the covered values with
+profile $\v{b}$. A consumer computes the full profile, checks equality with
+$\v{b}$, and tests $q_{\v{b}}(x)=0$ for membership or
+$q_{\v{b}}(x)\neq0$ for non-membership.
 
-These QR filters are unpredictable and negligibly manipulable, yet
-deterministically derivable without extra communication or consensus state once
-the epoch ends.
-
-**Cost.**
-The primary cost is verifiably constructing one incremental QR tree per epoch.
-OSSs undertake this work by stream-processing all tachygram accumulators in the
-epoch's authenticated anchor chain, producing PCD proofs for every leaf, and
-sharing them with the community. The cost of proving leaf integrity is therefore
-amortized.
-
-An individual tachygram (non-)membership test constrains its QR profile at a cost
-of $O(\log(N/B))$ and makes one polynomial query against an accumulator of degree
-at most $B$. With fixed $B=8{,}096$, the overall cost is $O(\log N)$ per
-tachygram (non-)membership test.
+For random-looking values, leaf depth is $O(\log(N/B))$ with high probability,
+not as a worst-case guarantee. A query constrains that many profile bits and
+makes one polynomial query against an accumulator of degree at most $B$. The
+one-time tree-construction cost is amortized across all subsequent queries.
 
 ### Transaction Life Cycle {#txflow}
 
@@ -1148,7 +1146,7 @@ The transaction flow is as follows:
    The request and returned exclusion proof are note-independent: OSS cannot
    differentiate a syncing request from a decoy request unrelated to any note.
    After the proofs return, the wallet shows that the epoched nullifiers
-   tested by the OSS form a subsequence of its locally derived range. This binds
+   tested by the OSS form an indexed subset of its locally derived range. This binds
    the two independently constructed branches into an unspent proof, which is
    then folded into the cached spendability proof. The wallet may locally
    cover a final anchor segment beyond the OSS endpoint before spending.
@@ -1417,86 +1415,6 @@ input:
 
 it attests that:
 
-#### Steps, Headers, and Bridging
-
-We now decompose the three statements into the proof tree. Each node is a
-**step**: a bounded circuit that takes up to two child PCD proofs plus some
-private witness, checks part of the statement, and emits a fresh PCD proof. A
-step's output is its **header** (the "data" of proof-carrying data), the public
-input that captures the computation so far. Headers flow upward, from children
-to parents. A parent **bridges** its two children by loading both headers and
-equality-checking the fields they must agree on (the same $\cm$ on user-local
-branches, the prefix origin and sequence lengths, contiguous epochs),
-then emits its own. Enough bridging makes the decomposition
-sound: every step proves a sub-statement of the same bundle-level statement.
-
-In this design, the wallet proves note-specific facts, the OSS proves absence
-of nullifiers over past epochs, and shared epoch evidence supplies their
-authenticated anchor chain history. The wallet bridges those branches only after
-the OSS proof returns.
-
-- The entire [Output statement](#output) is cheap and all $\Uc$, so it stays
-  one step, `OutputCore`.
-- `NfDerive` ($\Uc$) starts at $s_0$ and proves nullifiers in bounded batches.
-  After $n$ positions its derived range is $R=[s_0,s_0+n)$. It Horner-scans
-  them into $g_n^\Uc(X)$, including the first $|S|$ coefficients and masking
-  any trailing coefficients to zero. Its user-local header carries $\cm$, the
-  note-specific derivation key $k=\mathsf{KDF}(\nk,\psi)$, $S$, the masked
-  commitment, and $n$. These fields are always local to the user.
-- `InclusionInit` ($\Uc$) proves $\cm$ is in its creation stamp and advances
-  through the rest of that block to the inclusion anchor.
-  For an older note, `InclusionLift` advances that header within $e_\incl$ to
-  the join anchor $\sntl_{e_\incl+1}$. A same-epoch note needs no such lift
-  before binding.
-- The remaining $\Uc$ [Spend conditions](#spend) (value, note, payment-key, and
-  authority integrity) are cheap and all tied to one note, so they share a step,
-  `SpendCore`. It consumes the completed derivation and lifted inclusion branches,
-  equality-checks their $\cm$, recomputes $k$, and derives
-  $\nf_e,\nf_{e+1}$. It preserves the current inclusion-branch anchor and
-  $e_\incl$ for the final fold.
-- The pool-history evidence for a *full* epoch is **note-independent**, so it
-  factors into a shared sub-tree, built once and reused by every OSS request.
-  `EpochAccCert` ($\Sc$) multiplies one ordered sequence of per-stamp accumulator
-  polynomials into $e_i(X)$ and hashes their commitments through the corresponding
-  anchor segment from $\sntl_i$ to $\sntl_{i+1}$. It emits the reusable
-  `EpochHeader`; chaining these segments to the public target anchor
-  authenticates each segment's boundary anchors.
-- The OSS proves that every value in the delegated opaque sequence for
-  $S=[s_0,e)$ is absent from its corresponding whole epoch, without assuming
-  that the values belong to any note.
-  [`CrossEpochLift`](#cross-epoch-lift) consumes the shared `EpochHeader`
-  for each $i\in S$, tests the corresponding nullifier, and
-  Horner-extends $g_S^\Oc(X)$. It also carries a selected join epoch
-  $e_\join$ and captures its authenticated [join anchor](#join-anchor). The
-  resulting `UnspentHeader` remains note-independent until the final fold.
-- `SpendBind` ($\Uc$) fuses `SpendCore` with the returned `UnspentHeader`. It
-  aligns the two branches on $S=[s_0,s_0+m)$; the user's processed range is
-  $R=[s_0,s_0+n)$. It then invokes the polynomial-oracle capability to check
-  $g_n^\Uc(X)=X^{n-m}g_m^\Oc(X)$. This proves that the nullifier sequence over
-  $S$ is a prefix of the correctly derived sequence over $R$.
-  - Older note: it checks $e_\incl=e_\join$ and $\anchor_\incl=\sntl_\join$,
-    then emits at the exclusion anchor $\sntl_e$.
-  - Same-epoch spend: it checks $e_\incl=e$, bypasses the join equalities,
-    and emits at the inclusion anchor $\anchor_\incl$.
-- `ActionLift` advances the resulting `ActionHeader` within epoch $e$, preserving
-  every other field. It advances either the exclusion anchor of an older note or
-  the inclusion anchor of a same-epoch note to the target anchor.
-- `SpendBind`, `ActionLift`, and `OutputCore` emit the same `ActionHeader` shape,
-  carrying one action description, its two tachygrams, and an epoch and anchor.
-  Before assembly, every spend header reaches the bundle's common target anchor.
-  Repeated `BundleAssemble` steps recursively merge any number of action or
-  partial-bundle headers, concatenate their action descriptions and tachygram
-  lists, and multiply their tachygram polynomials. The final merge emits the
-  published stamp.
-
-<a id="step-range"></a>
-
-The figure below shows the division of historical coverage. The wallet proves
-inclusion at the creation stamp and advances within its inclusion epoch. The OSS
-proves the supplied nullifiers absent from every whole epoch in $S=[s_0,e)$ and
-authenticates the sentinel-to-sentinel chain through the exclusion anchor
-$\sntl_e$. For an older note, it records the join anchor at the end of
-$e_\incl$. The range may begin earlier for camouflage.
 - **Per-action satisfiability**: every [Spend](#spend) statement holds at the
   common target $\anchor$, and every [Output](#output) statement holds.
 - **Action-description integrity**: the public action-description list is
@@ -1515,521 +1433,453 @@ and consensus performs the same canonical-anchor check.
 
 ### Proof Tree {#prooftree}
 
-<p align="center">
-  <a href="./assets/step_range.svg">
-    <img src="./assets/step_range.svg" alt="step_range" />
-  </a>
-</p>
+We now decompose the three statements into the proof tree. Each node is a
+**step**: a bounded circuit that takes up to two child PCD proofs plus some
+private witness, checks part of the statement, and emits a fresh PCD proof. A
+step's output is its **header** (the "data" of proof-carrying data), the public
+input that captures the computation so far. Headers flow upward, from children
+to parents. A parent, besides proving its part of the sub-statement, **bridges**
+two children by loading both headers and equality-checking the fields they must
+agree on (e.g. the same $\cm$ field to ensure they are proving consistently
+against the same underlying note). Sufficient bridging checks make the
+decomposition of monolithic statement into a tree of sub-statement sound.
 
-This is a map of which party supplies evidence for each range, not a schedule of
-PCD inputs. The wallet later equality-checks its join anchor against the captured
-join anchor. The OSS neither receives the inclusion proof nor learns
-whether the selected join epoch belongs to a real note.
+> Notation: we will use different font families for steps and headers:
+> $\mathsf{MyStep}(\mathtt{Left}, \mathtt{Right})$. Fields in a header are
+> wrapped in curly bracket: $\mathtt{left}\{e, \cm\}$ with dot accessor
+> $\mathtt{left}.\cm$.
+>
+> Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge"
+> and the noun usually is a header name; whereas headers use "adj + noun"
+> like "Spendable, Unspent, VerifiedUnspent".
+>
+> Color: User scope is blue ($\Uc$), OSS scope is red ($\Oc$), and shared
+> headers are green ($\Sc$). OSS-generated shared-evidence steps are red.
 
-No note secret or commitment crosses the OSS boundary. Local headers may carry
-$\cm$ and $k$ directly because they are folded together before either header is
-externally exposed: `SpendCore` checks that the commitment proven included by
-the lifted inclusion branch is exactly the commitment used by `NfDerive`. For
-an older request, $e_\join$ reveals the inclusion epoch but not the note identity; a
-same-epoch or decoy request chooses it independently.
+As previewed in the [Tachyon transaction flow](#txflow),
+the wallet proves note-specific facts, the OSS proves absence
+of nullifiers over past epochs, and shared epoch evidence supplies their
+authenticated anchor chain history. The wallet bridges those branches only after
+the OSS proof returns.
 
-<details>
-<summary>Why the recursive Spendability proof is note-binding</summary>
+#### Shared Evidence: Anchor Chain and Tachygram Accumulator {#shared-headers}
 
-`SpendCore` first checks the two local branches carry the same $\cm$, recomputes
-$k=\mathsf{KDF}(\nk,\psi)$ from that note, and checks the $k$ carried by
-`NfDerive`. Binding of $\cm$ prevents an included note from being paired with a
-different note opening, even when a sender reuses $\psi$.
-Carrying $k$ also keeps successive `NfDerive` steps on the same derivation key;
-without it, every step would have to reopen $\pk=\mathsf{Com}(\ak,\nk)$ and
-repeat the KDF.
+Among all [spend action sub-statements](#spend), *creation stamp integrity* and
+*tachygram accumulator integrity* are the main contributors to the complexity.
+Naive realization walks along the anchor chain, scanning stamp by stamp, leading
+to a prohibitively deep PCD tree. Luckily, with the [QR filter](#qr) technique,
+we can prepare some shared evidence once and bring down the amortized per-note
+syncing cost to *logarithmic* in the length of the anchor chain segment and/or
+the total number of tachygrams in that segment, with high probability under the
+QR-filter model.
 
-`SpendBind` uses the polynomial identity to tie every value the OSS tested to the
-prefix derived by `NfDerive`. For an older note, equality with the captured join
-sentinel connects its inclusion proof to the OSS's authenticated chain; for a
-same-epoch note, $e_\incl=e$ selects the direct branch. The free-standing
-`UnspentHeader` becomes note-specific only at this final fold.
+For anchor ancestry, each leaf is represented by
 
-</details>
+$$
+\mathtt{AnchorChain}\{\anchor_L, \anchor_R, \{R_j\}, \v{b}, \mathsf{Com}(q^\anchor_{\v{b}}(X)) \}
+$$
 
-<details>
-<summary>Step reuse and OSS batching</summary>
+Its recursive proof certifies both the anchor-chain transitions and that
+$q^\anchor_{\v{b}}$ contains exactly the anchors with profile $\v{b}$ in
+$[\anchor_L,\anchor_R]$. $\mathsf{AnchorSeed}$ initializes the unsplit leaf at
+$\anchor_L$. $\mathsf{AnchorAppend}$ extends one terminal leaf through a
+contiguous stream of anchor updates: it verifies every hash-chain transition and
+appends exactly the resulting anchors matching that leaf's profile. For stamp
+transitions, it binds the exact accumulator absorbed by the anchor update. Stamp
+validity comes from the canonical history ending at the externally checked target
+anchor; it need not be recursively reproved while constructing this evidence.
 
-The reusable step is the shared per-epoch evidence (`EpochAccCert`, built once
-per epoch and consumed by every request). Each list consumes that evidence once
-per covered epoch through `CrossEpochLift`.
+When a leaf overflows, $\mathsf{AnchorLeftDecomp}$ and
+$\mathsf{AnchorRightDecomp}$ derive its two children using the [QR decomposition
+test](#qr-decomp). Both children inherit the same $(\anchor_L,\anchor_R)$ and can
+then be extended independently on demand. A consumer computes the candidate
+anchor's full profile, checks that it equals $\v{b}$, and proves
+$q^\anchor_{\v{b}}(\anchor)=0$.
 
-An OSS serving many requests can batch `CrossEpochLift` a second way, across
-*lists*: it carries many delegated sequence commitments in one bundled header
-and advances them all against the same `EpochHeader` in a single step. With $M$
-lists per step, the dominant
-cross-epoch count $N \cdot E$ (over $N$ lists and $E$ epochs) drops to
-$(N/M) \cdot E$, bounded by the per-step circuit budget. This is an OSS-internal
-throughput win, touching neither soundness nor privacy.
+Anchor-chain evidence is built online while its epoch is active and is not
+rebuilt after the epoch closes. Its offsets are therefore always fixed from the
+epoch's *starting sentinel*:
 
-</details>
+$$
+R_j := H^{j}(\sntl_{e}) = \underbrace{H(\ldots H}_{j \text{ times}}(\sntl_{e})\ldots)
+\quad\text{where }
+e = \mathsf{Epoch}(\anchor_L)
+$$
 
-<a id="headers">**Headers.**</a> Each header carries only its binding fields.
-After deriving $n$ positions from the left endpoint $s_0$ of $S$, the user's
-current range is $R=[s_0,s_0+n)$, so no separate $R$
-end point is carried. $b_n$ is the mask state for the next position. On the OSS
-branch, $s_0$ and $m$ likewise define the proven range $[s_0,s_0+m)$ and current
-epoch $s_0+m-1$. The fixed $e_\join$ selects one epoch of the requested
-range; $c_m$ records whether the processed prefix has reached it and captured
-its join anchor in $\sntl_\join$.
-
-| Header | Fields | Party |
-| ------ | ------ | ----- |
-| `NfHeader` | $(\cm,k,S,\mathsf{Com}(g_n^\Uc),n,b_n)$ | $\Uc$ |
-| `InclusionHeader` | $(\cm,\anchor_\incl,e_\incl)$ | $\Uc$ |
-| `SpendCoreHeader` | $(S,\mathsf{Com}(g_n^\Uc),n,\cv,\rk,\nf_e,\nf_{e+1},\anchor_\incl,e_\incl,e)$ | $\Uc$ |
-| `EpochHeader` | $(i,\sntl_i,\sntl_{i+1},\mathsf{Com}(e_i(X)))$ | $\Sc$ |
-| `UnspentHeader` | $(s_0,e_\join,\mathsf{Com}(g_m^\Oc),m,\sntl_{s_0+m},\sntl_\join,c_m)$ | $\Oc$ |
-| `ActionHeader` | $(\cv,\rk,\tg_0,\tg_1,\anchor,e)$ | $\Uc$ |
-| `StampHeader` | $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\anchor,e)$ | $\Uc$ |
-
-`InclusionHeader` and `NfHeader` are strictly user-local. They may expose $\cm$
-and the note-specific $k$ to their parent circuit because neither header is sent
-to the OSS or published. An `InclusionHeader` retains its fixed inclusion epoch
-while its current inclusion-branch anchor $\anchor_\incl$ advances within
-that epoch. Initially this field is the inclusion
-anchor; after `InclusionLift` it is the join anchor for an older note. A
-same-epoch spend retains the inclusion anchor. `SpendCore` absorbs $\cm,k$ but preserves
-$\anchor_\incl,e_\incl$ for
-`SpendBind`. No header the OSS holds (`EpochHeader`, `UnspentHeader`) carries $\cm$, $k$,
-$\nk$, or $\psi$.
-
-<a id="steps">**Steps.**</a>
-Left and Right are PCD inputs; a dash marks a leaf with witness only.
-
-| Step | Party | Left | Right | Output | Witness |
-| ---- | ----- | ---- | ----- | ------ | ------- |
-| `NfDerive` | $\Uc$ | `NfHeader`/— | — | `NfHeader` | leaf: $\mathsf{Note},\nk$; next nullifier batch, full old and updated sequence polynomials |
-| `ExtendRange` | $\Uc$ | `NfHeader` | — | `NfHeader` | — |
-| `InclusionInit` | $\Uc$ | — | — | `InclusionHeader` | $\mathsf{Note}$, creation stamp accumulator polynomial, preceding anchor, block anchor-chain suffix |
-| `InclusionLift` | $\Uc$ | `InclusionHeader` | — | `InclusionHeader` | in-epoch anchor-chain path |
-| `SpendCore` | $\Uc$ | `NfHeader` | `InclusionHeader` | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk), (\alpha,\theta,\rcv)$ |
-| `OutputCore` | $\Uc$ | — | — | `ActionHeader` | $\mathsf{Note}, r_\bot, (\alpha,\theta,\rcv)$ |
-| `EpochAccCert` | $\Sc$ | — | — | `EpochHeader` | epoch $i$'s ordered per-stamp accumulator polynomials |
-| `CrossEpochLift` | $\Oc/\Uc$ | `UnspentHeader`/— | `EpochHeader` | `UnspentHeader` | supplied $\nf_i$, updated sequence polynomial and, on continuation, its predecessor; epoch polynomial $e_i(X)$ |
-| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `ActionHeader` | sequence polynomials |
-| `ActionLift` | $\Uc$ | `ActionHeader` | — | `ActionHeader` | in-epoch anchor-chain path |
-| `BundleAssemble` | $\Uc$ | `ActionHeader`/`StampHeader` | `ActionHeader`/`StampHeader`/— | `StampHeader` | full child and product tachygram polynomials |
-| `StampLift` | $\Uc$ | `StampHeader` | — | `StampHeader` | anchor-chain path between anchors |
-
-**Step-local transitions.** These checks establish each branch before any
-independently constructed headers meet.
-
-- `NfDerive` maintains the invariant that an `NfHeader` of length $n$ has
-  derived epochs $R=[s_0,s_0+n)$, commits to their masked sequence polynomial
-  $g_n^\Uc(X)$, and carries the mask state $b_n$ for the next position.
-  - Base case: with no `NfHeader` child, it computes $\cm$ from the note
-    opening and $k=\mathsf{KDF}(\nk,\psi)$, then starts from the virtual state
-    $n=0$, $g_0^\Uc(X)=0$, and $b_0=1$.
-  - Normal case: from either the base state or an input header, it checks the
-    same $\cm,k,S$ and derives the next bounded batch of $\ell$ nullifiers. For
-    each $0\leq j<\ell$, it derives $\nf_{s_0+n+j}$ and applies
-    $$
-    b_{n+j+1}=b_{n+j}-\mathsf{isEq}(n+j,|S|-1).
-    $$
-    Ragu checks the Horner update
-    $$
-    g_{n+\ell}^\Uc(X)=X^\ell g_n^\Uc(X)
-    +\sum_{j=0}^{\ell-1}b_{n+j} \cdot \nf_{s_0+n+j} \cdot X^{\ell-1-j},
-    $$
-    after which the output header carries $n+\ell$ and $b_{n+\ell}$.
-- `InclusionInit` checks $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and then tests
-  $f^\tg_\incl(\cm)=0$ against $\tgacc_\incl$.
-  It absorbs $\tgacc_\incl$ into the preceding anchor,
-  advances through the remaining stamps in the same block, and emits the
-  end-of-block stamp's resulting inclusion anchor as
-  $(\cm,\anchor_\incl,e_\incl)$.
-- `InclusionLift` checks the same $\cm,e_\incl$ and advances the anchor through
-  stamps in $e_\incl$; it may finish with the transition to
-  $\sntl_{e_\incl+1}$. It never crosses another epoch.
-- `EpochAccCert` uses the same ordered per-stamp accumulator sequence to compute
-  $e_i(X)=\prod_t f^\tg_{i,t}(X)$ and to hash from
-  $\sntl_i$ through the ordinary epoch-$i$ stamps and the next boundary
-  transition to $\sntl_{i+1}$. Its header binds the product to that exact
-  sentinel-bounded segment; when there are no stamps, the product is $1$.
-
-**Bridging checks.** These equalities connect independently built branches and
-preserve the monolithic statements across later folds:
-
-- `SpendCore` checks that `NfHeader` and `InclusionHeader` carry the same $\cm$.
-  It recomputes $\cm$ and $k=\mathsf{KDF}(\nk,\psi)$ from one note opening,
-  checks the derivation branch's $k$ and terminal $b_n=0$, and preserves
-  $\anchor_\incl,e_\incl$ for the later join. Thus inclusion, past derivation,
-  spend-time nullifiers, value, and authority all refer to one note.
-- `CrossEpochLift` matches the `UnspentHeader`'s current sentinel to the
-  `EpochHeader`'s left sentinel and requires its epoch $i=s_0+m$. This prevents
-  gaps or reordering while extending the same delegated sequence through the
-  shared epoch evidence.
-- `SpendBind` aligns the two branches on
-  $S=[s_0,s_0+m)$ and $R=[s_0,s_0+n)$, then checks
-  $$
-  g_n^\Uc(X)=X^{n-m}g_m^\Oc(X).
-  $$
-  It also requires $c_m=1$ and $e=s_0+m$. For an older note it checks
-  $e_\join=e_\incl$ and $\anchor_\incl=\sntl_\join$, then emits at $\sntl_e$.
-  For a same-epoch note it instead checks $e_\incl=e$ and emits at
-  $\anchor_\incl$. These checks bind the opaque OSS exclusions to the user's
-  derived prefix and connect the appropriate inclusion path.
-- `ActionLift` and `StampLift` change only the anchor while preserving the epoch
-  and every other header field. Their output therefore carries the same proven
-  action or stamp to a later anchor.
-- Each `BundleAssemble` checks its children share
-  $(\anchor,e)$, preserves their wire order, and proves that the output action
-  and tachygram lists are their concatenation and that $\tgacc$ is the product
-  of their accumulator polynomials. Thus assembly neither drops nor alters an
-  action.
-
-<a id="prooftree-diagram">**The tree.**</a>
-For an ordinary older-note, one-spend, one-output transaction (colored by
-proving party). Private witnesses are listed in the [step table](#steps) and
-omitted here:
+This relies on an individual user having no significant bias over $\sntl_e$ and
+only limited ability to grind subsequent anchor values against the already fixed
+offsets. That assumption affects bucket balance and proving cost, not the
+soundness of the certified partition.
 
 ```mermaid
-flowchart BT
-  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+flowchart TB
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
-  classDef optional fill:#e8eeff,stroke:#4169E1,color:#1a1a1a,stroke-dasharray:5 5;
 
-  eacc["EpochAccCert<br/>× epochs"]:::s
+  anc["$$\mathtt{AnchorChain}\\ \{\anchor_L,\anchor_L,\emptyset,[],\mathsf{Com}(X-\anchor_L)\}$$"]:::s
+  ancprime["$$\mathtt{AnchorChain}\\ \{\cdot,\anchor_R',\cdot,\cdot,\mathsf{Com}(q'^\anchor_{\v{b}})\}$$"]:::s
+  ancl["$$\mathtt{AnchorChain}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|0,\mathsf{Com}(q'^\anchor_{\v{b}\|0})\}$$"]:::s
+  ancr["$$\mathtt{AnchorChain}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|1,\mathsf{Com}(q'^\anchor_{\v{b}\|1})\}$$"]:::s
 
-  nfderive["NfDerive<br/>× batches"]:::u
-  extend[ExtendRange]:::optional
-  uinit[InclusionInit]:::u
-  ilift["InclusionLift<br/>to join anchor"]:::u
-  score[SpendCore]:::u
-  xoss["CrossEpochLift<br/>× epochs"]:::o
-  xextend["CrossEpochLift<br/>"]:::optional
-  sbind[SpendBind]:::u
-  alift["ActionLift<br/>× stamps"]:::u
-  ocore[OutputCore]:::u
-  bmerge["BundleAssemble<br/>× actions"]:::u
-  stamp((stamp))
-
-  nfderive -->|NfHeader| score
-  nfderive -.->|NfHeader| extend
-  extend -.->|NfHeader| score
-  uinit -->|InclusionHeader| ilift
-  ilift -->|InclusionHeader| score
-
-  eacc -->|EpochHeader| xoss
-  xoss -->|UnspentHeader| sbind
-  xoss -.->|UnspentHeader| xextend
-  eacc -.->|EpochHeader| xextend
-  xextend -.->|UnspentHeader| sbind
-  score -->|SpendCoreHeader| sbind
-
-  sbind -->|ActionHeader| alift
-  alift -->|ActionHeader| bmerge
-  ocore -->|ActionHeader| bmerge
-  bmerge -->|StampHeader| stamp
+  AnchorSeed(["$$\mathsf{AnchorSeed}$$"]):::o --> anc
+  anc --> AnchorAppend(["$$\mathsf{AnchorAppend}$$"]):::o --> ancprime
+  anc --> AnchorLeftDecomp(["$$\mathsf{AnchorLeftDecomp}$$"]):::o --> ancl
+  anc --> AnchorRightDecomp(["$$\mathsf{AnchorRightDecomp}$$"]):::o --> ancr
 ```
 
-Dashed nodes denote optional local range extension. After `ExtendRange`, the
-wallet resumes `NfDerive`; the user-side `CrossEpochLift` advances the returned
-OSS branch in parallel.
+The second shared structure contains all tachygrams from one complete past
+epoch.[^full-epoch] Its leaves are
 
-This spend branch is built bottom-up in three phases. The wallet sends request
-data to the OSS, but no user proof feeds the OSS branch.
+$$
+\mathtt{Tachygrams}\{\sntl_i, \sntl_{i+1}, \{R_j\}_j, \v{b}, \mathsf{Com}(q^\tg_{\v{b}})\}
+$$
 
-1. **Dispatch.** The wallet sends the opaque list
-   $[(i,\nf_i)]_{i\in S}$ and selected join epoch $e_\join$. The leaf
-   `CrossEpochLift` can start as soon as the shared `EpochHeader` for $s_0$ is
-   available; neither `InclusionHeader` nor `NfHeader` must exist yet.
+$\mathsf{TachygramsSeed}$ starts an unsplit empty leaf at $\sntl_i$.
+$\mathsf{TachygramsAppend}$ extends one terminal leaf through a contiguous
+anchor-chain segment, verifies each transition, and appends exactly the
+profile-matching tachygrams from every stamp accumulator absorbed in that
+segment. Non-matching tachygrams contribute no factor but are still processed,
+so the leaf's right endpoint authenticates the whole segment. Decomposition
+again emits two children with the same endpoints, each independently extendable.
+Final evidence must reach $\sntl_{i+1}$; sentinel transitions contribute no
+factor. Consumers constrain the queried value's profile before using $q^\tg_{\v{b}}$
+for membership or non-membership.
 
-2. **Parallel proving ($\Uc/\Oc$).** On the wallet, a previously cached
-   `InclusionInit` proof links the note to its inclusion anchor.
-   For an older note, `InclusionLift` reaches the join anchor
-   $\sntl_{e_\incl+1}$, while
-   `NfDerive` independently scans forward from $s_0$. Concurrently, repeated
-   `CrossEpochLift` steps clear every epoch in $S$, advance the anchor chain,
-   and capture the join anchor selected by $e_\join$. The OSS stops at
-   the exclusion anchor and returns the
-   `UnspentHeader`. Garbage and decoy lists are valid requests because
-   derivation lies outside its statement; admission and rate limiting are
-   separate service policy.
+[^full-epoch]: An earlier draft considered partial-epoch tachygram accumulators.
+    Restricting this evidence to complete sentinel-bounded epochs avoids separate
+    header and step variants for ordinary and sentinel endpoints.
 
-3. **Wallet, after all branches complete ($\Uc$).** The completed
-   `NfDerive` and `InclusionHeader` branches meet at `SpendCore`, which directly
-   binds $\cm$, $k$, the authenticated inclusion epoch, the masked commitment,
-   and the spend-time nullifiers $(\nf_e,\nf_{e+1})$. `SpendBind` then matches
-   $S$ against the OSS proof and checks
-   $g_n^\Uc(X)=X^{n-m}g_m^\Oc(X)$. It applies the older- or same-epoch join and
-   emits an `ActionHeader` at the exclusion anchor for an older note or the
-   inclusion anchor for a same-epoch note. `ActionLift` advances either one to
-   the target anchor. Recursive
-   `BundleAssemble` steps fold it and the output headers into the published stamp.
+```mermaid
+flowchart TB
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-> Note: at every hand-off across a trust boundary, the carried PCD proof is
-> [re-randomized](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization)
-> first. The relayed proof is then unlinkable to its pre-handoff form and reveals
-> nothing about the private inputs of earlier steps beyond its public header.
-> These hand-off points include the OSS returning the exclusion proof, the wallet
-> publishing its stamp, and an aggregator merging published stamps. The initial
-> wallet-to-OSS request contains no PCD proof to re-randomize.
+  tg["$$\mathtt{Tachygrams}\\ \{\sntl_i,\sntl_i,\emptyset,[],\mathsf{Com}(1)\}$$"]:::s
+  tgprime["$$\mathtt{Tachygrams}\\ \{\cdot,\anchor_R',\cdot,\cdot,\mathsf{Com}(q'^\tg_{\v{b}})\}$$"]:::s
+  tgl["$$\mathtt{Tachygrams}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|0,\mathsf{Com}(q'^\tg_{\v{b}\|0})\}$$"]:::s
+  tgr["$$\mathtt{Tachygrams}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|1,\mathsf{Com}(q'^\tg_{\v{b}\|1})\}$$"]:::s
+
+  TachygramsSeed(["$$\mathsf{TachygramsSeed}$$"]):::o --> tg
+  tg --> TachygramsAppend(["$$\mathsf{TachygramsAppend}$$"]):::o --> tgprime
+  tg --> TachygramsLeftDecomp(["$$\mathsf{TachygramsLeftDecomp}$$"]):::o --> tgl
+  tg --> TachygramsRightDecomp(["$$\mathsf{TachygramsRightDecomp}$$"]):::o --> tgr
+```
+
+The diagram below visualizes the reusable certified headers and their respective
+anchor-chain ranges. $\mathtt{Tachygrams}$ headers are generated only for past
+epochs; $\mathtt{AnchorChain}$ evidence may also cover the active epoch up to the
+chain tip.
+
+
+<p align="center">
+  <a href="./assets/shared_headers.svg">
+    <img src="./assets/shared_headers.svg" alt="Shared evidence headers" />
+  </a>
+</p>
 
 #### Same-epoch Spend {#same-epoch-spend}
 
-<p align="center">
-  <a href="./assets/step_range_same_epoch.svg">
-    <img src="./assets/step_range_same_epoch.svg" alt="step_range_same_epoch" />
-  </a>
-</p>
+We start with the simplest case: when user spend a note that's created in the
+same epoch (namely $e = e_\incl$). For same-epoch spend, no past exclusion
+condition is required, obviating any OSS assistance.
 
-When $e_\incl=e$, past exclusion is unnecessary for soundness but remains useful
-as camouflage. The wallet therefore follows the same branches through
-`SpendBind`: it chooses a
-nonempty $S=[s_0,e)$, derives the note's actual nullifiers for that range, and
-runs `NfDerive`, the OSS branch, and `SpendBind` normally. It chooses an
-independent $e_\join\in S$, so the request has the same shape as an
-older note's. How well this hides the same-epoch case depends on wallet policy:
-the wallet should sample $(s_0,e_\join)$ from the same joint distribution that
-older-note requests expose.
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 15, "padding": 5}}}%%
+flowchart TB
+  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-Its inclusion branch is shorter: `InclusionInit` stops at the inclusion anchor,
-which `SpendBind` carries into the `ActionHeader`. `ActionLift` then advances the
-completed action to the target anchor. The final PCD proof hides this internal
-shape.
+  spendable["$$\mathtt{Spendable}\\ \{\cm, e, \anchor\}$$"]:::u
+  spendstamp["$$\mathtt{SpendStamp}\\ \{\rk,\cv, \nf_e, \nf_{e+1}, \anchor, \acc^\tg \}$$"]:::u
+  outputstamp["$$\mathtt{OutputStamp}\\ \{\rk,\cv, \cm, \cm_\bot, \anchor, \acc^\tg \}$$"]:::u
+  stamp["$$\mathtt{Stamp}\\ \left\{ \{(\rk_i,\cv_i)\}, \{\tg_i\}, \anchor, \acc^\tg \right\}$$"]:::u
+  stampprime["$$\mathtt{Stamp}\\ \{ \cdot, \cdot, \anchor', \cdot \}$$"]:::u
+  anc["$$\mathtt{AnchorChain}\\ \{\anchor_L,\anchor_R,\{R_j\},\v{b},\mathsf{Com}(q^\anchor_{\v{b}})\}$$"]:::s
 
-`SpendBind` admits this case through $e_\incl=e$ and bypasses the join-anchor
-equality. Canonical inclusion proves the note did not
-exist before epoch $e$, while consensus's live-window test of $\nf_e$ covers the
-entire interval after its creation. An older note cannot use the equality branch
-because the inclusion-anchor update binds its actual $e_\incl$. Thus the common
-construction is sound and does not reveal this case through its proving shape
-or OSS interaction. Creation and spending in the same block remain unsupported
-because the block containing the creation stamp must already be finalized.
+  SpendableInit(["$$\mathsf{SpendableInit}$$"]):::u
+  SpendBind(["$$\mathsf{SpendBind}$$"]):::u
+  OutputSeed(["$$\mathsf{OutputSeed}$$"]):::u
+  StampMerge(["$$\mathsf{StampMerge}$$"]):::u
+  StampLift(["$$\mathsf{StampLift}$$"]):::u
 
-#### Extending a delegated range {#extend-range}
+  SpendableInit --> spendable --> SpendBind --> spendstamp
+  OutputSeed --> outputstamp
+  spendstamp --> StampMerge
+  outputstamp --> StampMerge
+  StampMerge --> stamp
+  stamp --> StampLift
+  anc --> StampLift
+  StampLift --> stampprime
+```
 
-A request may extend its right endpoint without rebuilding either proof branch.
-The dashed nodes in the [proof tree](#prooftree-diagram) show this optional
-continuation.
+Normally, $\mathtt{Spendable}$ requires inclusion and all required past
+exclusion through $\mathtt{Spendable}.\anchor$. For the inclusion epoch,
+$\mathsf{SpendableInit}$ instead takes the creation stamp data as private witness,
+proves $\cm$ occurs in its output data and is a root of its accumulator, and
+computes the stamp's resulting anchor from that same accumulator. This is a
+conditional inclusion claim: the later $\mathsf{StampLift}$ authenticates the
+resulting anchor against $\mathtt{AnchorChain}$ evidence whose target is checked
+against canonical history. No past exclusion is necessary because the note did
+not exist before that stamp.
+For the $\mathsf{StampLift}$ step, it's important that circuit only allows an
+anchor update within the same spending epoch, keeping $e=e_\incl$. Sufficient
+lift is needed to obfuscate the inclusion block for [spend unlinkability](#nf-sec).
+The step computes the old anchor's constrained QR profile, checks that it equals
+the input $\mathtt{AnchorChain}$ leaf's profile, proves
+$q^\anchor_{\v{b}}(\anchor)=0$, and requires the header's right endpoint to equal the new
+stamp anchor. It also enforces
+$\mathsf{Epoch}(\anchor_L)=\mathsf{Epoch}(\anchor_R)=
+\mathsf{Epoch}(\anchor)=\mathsf{Epoch}(\anchor')$ and requires the covered range
+to contain no sentinel transition. Thus the lift proves same-epoch ancestry
+rather than merely copying endpoints.
 
-**OSS branch.** An `UnspentHeader` carries $s_0$ and its processed length $m$,
-so its current range is $S_m=[s_0,s_0+m)$; it carries no fixed right endpoint.
-`CrossEpochLift` extends this range with epoch $i=s_0+m$, tests $\nf_i$, updates
+Users may cache the $\mathtt{Spendable}$ immediately after note inclusion and
+send it to a hardware wallet for spend-time signing in parallel with
+$\mathsf{SpendBind}$ and the later steps.
+
+
+To map back to the [monolithic action statement](#statement), our steps cover
+these sub-statements respectively:
+
+- $\mathsf{OutputSeed}$: all of [output action statement](#output).
+- $\mathsf{SpendableInit}$: conditional creation-stamp commitment membership;
+  past nullifier exclusion is unnecessary in the inclusion epoch.
+- $\mathsf{SpendBind}$: integrity of $\cv, \cm, \pk$, value range of $v$,
+  spend authority $\rk$, and spend-time nullifier integrity $\nf_e, \nf_{e+1}$.
+- $\mathsf{StampMerge}$: ensures accumulator integrity $\acc^\tg$ at the
+  bundle-level.
+- $\mathsf{StampLift}$: proves same-epoch ancestry from the stamp's old anchor to
+  its target $\anchor$.
+
+#### Past-epoch Spend {#past-epoch-spend}
+
+When a wallet comes back online, it may refresh the cached spendability proofs
+for all its unspent notes. Once a note's inclusion epoch $e_\incl$ is in the
+past, spending it requires proving exclusion across every intervening epoch.
+The first target is therefore the end of the inclusion epoch,
+$\sntl_{e_\incl+1}$. Because the [shared evidence](#shared-headers) for anchor
+ancestry and tachygram membership canonically covers whole epochs, it is simpler
+to reinitialize $\mathtt{Spendable}$ directly at this sentinel than to lift its
+old inclusion anchor through an ad hoc partial range.
+
+$\mathsf{SpendableReinit}$ first bridges the two inclusion-epoch headers. It
+checks that $\mathtt{AnchorChain}$ and $\mathtt{Tachygrams}$ cover the same
+sentinel-bounded epoch and reopens the note to recompute $\cm$ and
+$k=\mathsf{KDF}(\nk,\psi)$. It then derives $\nf_{e_\incl}$, computes and
+constrains its [QR profile](#iqt), checks that it equals the supplied
+$\mathtt{Tachygrams}$ leaf's profile, and checks
+$q^\tg_{\v{b}}(\nf_{e_\incl})\neq 0$
+against the corresponding certified tachygram leaf. Separately, it proves $\cm$
+belongs to the witnessed creation-stamp accumulator and uses the
+$\mathtt{AnchorChain}$ evidence to authenticate that stamp's resulting anchor:
+it recomputes $\anchor_\mathsf{create}$ from the same accumulator commitment,
+computes the anchor's profile, checks equality with the leaf profile, and proves
+$q^\anchor_{\v{b}}(\anchor_\mathsf{create})=0$. The
+membership check proves creation in epoch $e_\incl$; the nullifier
+non-membership check proves the note remained unspent through the rest of that
+epoch. The resulting $\mathtt{Spendable}$ is therefore bound to $\cm$ and
+anchored at $\sntl_{e_\incl+1}$.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 25, "padding": 5}}}%%
+flowchart TB
+  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
+
+  vfyunspent["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_0,m,\sntl_{s_0},\sntl_{s_0+m}\}$$"]:::u
+  nf["$$\mathtt{Nullifiers}\\ \{\cm, k, r_0, n, \mathsf{Com}(g_n(X))\}$$"]:::u
+  unspent["$$\mathtt{Unspent}\\ \{s_0, m=0, \sntl_{s_0}, \sntl_{s_0+m}, \mathsf{Com}(1)\}$$"]:::o
+  unspentprime["$$\mathtt{Unspent}\\ \{s_0,m,\sntl_{s_0},\sntl_{s_0+m},\mathsf{Com}(g_m)\}$$"]:::o
+  tg["$$\mathtt{Tachygrams}\\ \{\sntl_i,\sntl_{i+1},\{R_j\},\v{b},\mathsf{Com}(q^\tg_{\v{b}})\}$$"]:::s
+  spendable["$$\mathtt{Spendable}\\ \{\cm, e_\incl + 1, \sntl_{e_\incl+1}\}$$"]:::u
+  spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_0+m,\sntl_{s_0+m}\}$$"]:::u
+  spendstamp["$$\mathtt{SpendStamp}\\ \{\rk,\cv, \nf_e, \nf_{e+1}, \anchor, \acc^\tg \}$$"]:::u
+  ancincl["$$\mathtt{AnchorChain}\\ \{\sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\anchor_{\v{b}}(X)) \}$$"]:::s
+  tgincl["$$\mathtt{Tachygrams}\\ \{ \sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\tg_{\v{b}}(X))\}$$"]:::s
+
+  UnspentSeed(["$$\mathsf{UnspentSeed}$$"]):::o
+  UnspentLift(["$$\mathsf{UnspentLift}$$"]):::o
+  NullifierDerive(["$$\mathsf{NullifierDerive}$$"]):::u
+  UnspentBind(["$$\mathsf{UnspentBind}$$"]):::u
+  SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
+  SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
+  SpendBind(["$$\mathsf{SpendBind}$$"]):::u
+
+  UnspentSeed --> unspent
+  unspent --> UnspentLift --> unspentprime
+  tg --> UnspentLift
+  UnspentBind --> vfyunspent
+  nf --> NullifierDerive --> nf
+  unspentprime --> UnspentBind
+  nf --> UnspentBind
+  ancincl --> SpendableReinit --> spendable
+  tgincl --> SpendableReinit
+  spendable --> SpendableLift --> spendableprime
+  vfyunspent --> SpendableLift
+  spendableprime --> SpendBind --> spendstamp
+
+  unspentprime ~~~ ancincl
+```
+
+$\mathsf{NullifierDerive}$ has an explicit base and continuation relation. The
+base reopens one note, recomputes $\cm$ and $k=\mathsf{KDF}(\nk,\psi)$,
+and emits
+
 $$
-g_{m+1}^\Oc(X)=Xg_m^\Oc(X)+\nf_i,
+\mathtt{Nullifiers}\{\cm,k,r_0,0,\mathsf{Com}(1)\}.
 $$
-and increments $m$. Additional $(i,\nf_i)$ pairs may therefore arrive as a
-stream. `SpendBind` fixes the eventual endpoint by requiring $e=s_0+m$.
 
-**Wallet branch.** To preserve earlier derivation work, the wallet retains the
-`NfHeader` at each potential extension boundary
+A continuation preserves $(\cm,k,r_0)$, derives
+$\nf_{r_0+n}=f_k(r_0+n)$, increments $n$, and appends the
+[indexed factor $F_{i,\nf_i}(X)$](#nf-flow):
+
 $$
-n=|S|,\qquad b_n=0.
+g_{n+1}(X)=g_n(X)\cdot F_{r_0+n,\nf_{r_0+n}}(X).
 $$
-Here $g_n^\Uc(X)$ contains exactly the derived sequence over $S$, with no
-trailing masked positions. `ExtendRange` checks $n=|S|$, replaces $S$ by a
-right extension $S'$ with the same $s_0$, resets $b_n$ to one, and preserves
-every other field, including $\mathsf{Com}(g_n^\Uc)$. `NfDerive` then resumes
-at epoch $s_0+n$ and turns the mask off after the last position of $S'$. If the
-main derivation branch has already appended trailing zeros, the wallet extends
-from the retained boundary header instead.
 
-The equality $n=|S|$ is necessary. A header that has advanced past $|S|$
-already commits to zero coefficients at positions $|S|,\ldots,n-1$. Resetting
-its mask would turn derivation back on after this gap. The delegated list could
-then use zero at each corresponding epoch; since every published tachygram is
-nonzero, zero passes the non-membership checks, leaving the note's actual
-nullifiers in the gap untested. Starting instead from $n=|S|$ keeps the derived
-sequence a prefix. It also enforces a strict extension without comparing
-endpoints: the reset mask can return to zero only if the new turn-off position
-$|S'|-1$ still lies ahead, while bounded counters exclude field wraparound. At
-the final fold, the branches agree on
-$$
-S'=[s_0,s_0+m),\qquad
-g_n^\Uc(X)=X^{n-m}g_m^\Oc(X),
-$$
-so the extended OSS sequence remains a prefix of the wallet's derived sequence.
+The old and new commitments are fixed before the random-point product check.
+These invariants make every header commit to exactly the consecutive range
+$[r_0,r_0+n)$ derived from one note.
 
-After the OSS handoff, the wallet may extend both branches itself: it applies
-`ExtendRange` followed by `NfDerive` on the retained header, and applies
-`CrossEpochLift` to the returned `UnspentHeader`. The selected $e_\join$ remains
-fixed, while the join anchor and capture state follow their ordinary recurrence.
-Because the returned header fixes no right endpoint, the OSS cannot know which
-later sentinel the spend will use.
+Past exclusion is built independently. $\mathsf{NullifierDerive}$ derives a
+consecutive local range from the note and extends its [ranged nullifier
+commitment](#nf-flow). The wallet may give the OSS the relevant opaque pairs
+$(i,\nf_i)$, but no note-opening data. $\mathsf{UnspentSeed}$ creates the empty
+commitment at $\sntl_{s_0}$; this seed cannot
+be bound into a spendable proof until at least one epoch is appended. Each
+$\mathsf{UnspentLift}$:
 
-#### Cross-epoch Lifts {#cross-epoch-lift}
-
-Every past epoch uses the same `CrossEpochLift`. Reaching $\sntl_e$ certifies
-complete coverage through epoch $e-1$, so no lift is needed in the active epoch.
-
-- `CrossEpochLift` maintains the invariant that a length-$m$ `UnspentHeader`
-  covers $[s_0,s_0+m)$, commits to $g_m^\Oc(X)$, and ends at
-  $\sntl_{s_0+m}$.
-  - **Base case:** with no `UnspentHeader` child, it starts from the virtual
-    state $m=0$, $g_0^\Oc(X)=0$, current sentinel $\sntl_{s_0}$, and
-    $(\sntl_\join,c_0)=(0,0)$. It then processes epoch $s_0$ by the normal case,
-    producing the first actual header at $\sntl_{s_0+1}$.
-  - **Normal case:** for $i=s_0+m$, it consumes the matching `EpochHeader`,
-    tests $\nf_i$ against epoch $i$, extends the sequence and join-capture
-    state, and emits length $m+1$ at $\sntl_{i+1}$. The OSS normally runs these
-    steps before handoff, but the wallet may continue them locally.
-
-A valid instance of a continuing [`CrossEpochLift`](#steps) assures that, given the public
-input:
-
-- the input [`UnspentHeader`](#headers)
-  $(s_0,e_\join,\mathsf{Com}(g_m^\Oc),m,\sntl_i,
-  \sntl_\join,c_m)$
-- the shared [`EpochHeader`](#headers)
-  $(i,\sntl_i,\sntl_{i+1},\mathsf{Com}(e_i(X)))$, certifying
-  epoch $i$ boundary-to-boundary with its [whole-epoch accumulator](#epoch-acc)
-  $e_i(X)$
-- the output `UnspentHeader`
-  $(s_0,e_\join,\mathsf{Com}(g_{m+1}^\Oc),m+1,\sntl_{i+1},
-  \sntl_\join',c_{m+1})$
-
-the prover knows the secret witness:
-
-- the child PCD proofs carried by the two input headers
-- the supplied nullifier $\nf_i$
-- the full old and updated sequence polynomials
-  $g_m^\Oc(X),g_{m+1}^\Oc(X)$
-- the epoch polynomial $e_i(X)$ for epoch $i$
-
-such that the following conditions hold:
-
-- **Child proof recursion**: fold the child proofs into the running PCD proof.
-- **Consecutive epoch**: $i=s_0+m$.
-- **Delegated commitment extension**:
-  $g_{m+1}^\Oc(X)=Xg_m^\Oc(X)+\nf_i$. Ragu tests this at its randomized
-  polynomial-oracle point $r$ as the field identity
-  $g_{m+1}^\Oc(r)=r\,g_m^\Oc(r)+\nf_i$.
-- **Sentinel continuity**: two input headers carry the same
-  $\sntl_i$.
-- **Exclusion extension**: $e_i(\nf_i) \neq 0$ against the committed
-  $\mathsf{Com}(e_i(X))$, attested through the [poly-query oracle](#acc); one query
-  clearing all of epoch $i$.
-- **Join capture**: for $h_i=\mathsf{isEq}(i,e_\join)$,
+- requires its current right endpoint to equal the input
+  $\mathtt{Tachygrams}$ header's left sentinel;
+- requires that header to cover the next epoch $i=s_0+m$;
+- computes and constrains $\nf_i$'s QR profile, checks that it equals the supplied
+  leaf's profile, and proves $q^\tg_{\v{b}}(\nf_i)\neq0$; and
+- appends the same [indexed factor $F_{i,\nf_i}(X)$](#nf-flow), fixing the old
+  and new commitments before the oracle challenge and enforcing
   $$
-  c_{m+1}=c_m+h_i,\qquad
-  \sntl_\join'=
-  h_i\cdot \sntl_{i+1} + (1-h_i)\cdot \sntl_\join.
+  g_{m+1}(X)=g_m(X)\cdot F_{s_0+m,\nf_{s_0+m}}(X),
   $$
-  Since the traversed epoch indices are distinct and bounded, $h_i=1$ at most
-  once.
+  increments $m$, and advances the right endpoint to
+  $\sntl_{i+1}$.
 
-The `EpochHeader` is note-independent, so crossing a past epoch costs one per-list
-step, and an OSS may [batch many lists](#steps) against the same one.
+These equalities force consecutive sentinel-to-sentinel advancement: an OSS
+cannot skip, repeat, or reorder an epoch. Repeating the step for $m$ epochs
+yields one $\mathtt{Unspent}$ proof for the contiguous range
+$[\sntl_{s_0},\sntl_{s_0+m}]$.
 
-**Final user binding.** The active epoch $e$ is still in progress, so no
-`EpochHeader` exists for it. [`SpendBind`](#steps) instead binds the delegated
-sequence ending at the exclusion anchor $\sntl_e$ to the user's derivations and
-joins the inclusion proof at the captured join anchor when the note is older.
+$\mathsf{UnspentBind}$ then makes this note-independent proof note-specific. It
+requires $m>0$ and
+$[s_0,s_0+m)\subseteq[r_0,r_0+n)$, and checks that the OSS commitment is an
+indexed subset of the wallet's locally derived commitment using the
+[quotient relation](#nf-flow). It carries the local $\cm$ into
+$\mathtt{VerifiedUnspent}$ while retaining the bound counters $(s_0,m)$.
+Because each commitment factor binds both its epoch
+and value, this proves that every nullifier tested by the OSS is the actual
+nullifier derived for that note and epoch.
 
-A valid instance assures that, given the public input:
+Finally, $\mathsf{SpendableLift}$ requires both children to carry the same $\cm$
+and enforces
 
-- the [`UnspentHeader`](#headers)
-  $(s_0,e_\join,\mathsf{Com}(g_m^\Oc),m,\sntl_e,
-  \sntl_\join,c_m)$
-  returned by the OSS
-- the [`SpendCoreHeader`](#headers)
-  $(S,\mathsf{Com}(g_n^\Uc),n,\cv,\rk,\nf_e,\nf_{e+1},
-  \anchor_\incl,e_\incl,e)$,
-  already revealing the spend nullifier $\nf_e$ and carrying the masked commitment
-- the output [`ActionHeader`](#headers)
-  $(\cv,\rk,\nf_e,\nf_{e+1},\anchor,e)$
+$$
+e_\mathsf{old}=s_0,\qquad
+\anchor_\mathsf{old}=\sntl_{s_0},\qquad
+e_\mathsf{new}=s_0+m,\qquad m>0.
+$$
 
-the prover knows the secret witness:
+For the first lift, these equalities force
+$s_0=e_\incl+1$, so exclusion begins exactly where inclusion coverage ends. The
+step advances the spendable state to the verified right sentinel and its implied
+epoch. $\mathsf{SpendBind}$ then recomputes the note relation, derives
+$(\nf_e,\nf_{e+1})$ for that epoch, and performs the same value and authority
+checks as in the [same-epoch case](#same-epoch-spend), emitting
+$\mathtt{SpendStamp}$. Output construction, stamp merging, and any final
+in-epoch stamp lift are unchanged and therefore omitted from the diagram.
 
-- the child PCD proofs carried by the two input headers
-- the full sequence polynomials $g_n^\Uc(X),g_m^\Oc(X)$
+#### Delegation Extension and Multiple OSSs {#extend-range}
+Both branches remain extendable. The wallet extends its local commitment by
+applying $\mathsf{NullifierDerive}$ again; an OSS extends its proof by applying
+$\mathsf{UnspentLift}$ to the next full-epoch tachygram evidence. Neither branch
+fixes its final endpoint in advance.
 
-such that the following conditions hold:
+A wallet may also delegate different ranges to different OSSs. To combine two
+adjacent results, $\mathsf{UnspentMerge}$ takes
 
-- **Child proof recursion**: fold the child proofs into the running PCD proof.
-- **Prefix consistency**: the child headers agree on
-  $S=[s_0,s_0+m)$, the user's processed range is $R=[s_0,s_0+n)$, and
-  $$
-  g_n^\Uc(X)=X^{n-m}g_m^\Oc(X).
-  $$
-  `NfDerive` has already checked all $n$ derivations and masked exactly the
-  trailing $n-m$ positions. Ragu tests the displayed identity at a fresh
-  polynomial-oracle point.
-- **Consecutive epoch**: $s_0+m=e$.
-- **Complete past boundary**: the `UnspentHeader` ends at
-  $\sntl_e$, the authenticated exclusion anchor.
-- **Completed join capture**: $c_m=1$, proving
-  $e_\join\in S$ and
-  $\sntl_\join=\sntl_{e_\join+1}$ on the carried chain.
-- **Inclusion provenance**: let $q=\mathsf{isEq}(e_\incl,e)$. If $q=0$, require
-  $e_\join=e_\incl$ and
-  $\anchor_\incl=\sntl_\join$, and require the output
-  $\anchor=\sntl_e$. If $q=1$, require the output
-  $\anchor=\anchor_\incl$, the inclusion anchor carried by the inclusion branch.
+$$
+\begin{aligned}
+L&=\mathtt{Unspent}\{s_L,m_L,\sntl_{s_L},\sntl_{s_L+m_L},
+    \mathsf{Com}(g_L)\},\\
+R&=\mathtt{Unspent}\{s_R,m_R,\sntl_{s_R},\sntl_{s_R+m_R},
+    \mathsf{Com}(g_R)\}.
+\end{aligned}
+$$
 
-#### Action Lift {#action-lift}
+It requires $m_L,m_R>0$, $s_L+m_L=s_R$, and equality between $L$'s ending
+sentinel and $R$'s starting sentinel. These checks establish order and exclude
+gaps or overlap. It then emits
 
-`ActionLift` moves a completed action from its current anchor to a later target
-anchor in the same spending epoch. That current anchor is the exclusion anchor
-for an older note or the inclusion anchor for a same-epoch note. A valid instance
-consumes $(\cv,\rk,\tg_0,\tg_1,\anchor',e)$ and emits the same fields at
-$\anchor$, proving every intervening anchor-chain update with epoch $e$. The
-step is bounded and may repeat; it changes no field except the anchor.
+$$
+\mathtt{Unspent}\{s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R},
+  \mathsf{Com}(g_Lg_R)\},
+$$
 
-The active epoch falls to the consensus [two-epoch live-window
-check](#consensus-rule) on $(\nf_e, \nf_{e+1})$;
-[anchor validation](#consensus-rule) confirms the final $\anchor$ is canonical
-and belongs to epoch $e$.
+setting $g_M=g_Lg_R$ and proving $g_M(r)=g_L(r)g_R(r)$ at a random point after
+all three commitments are fixed. Although polynomial
+multiplication is commutative, the endpoint checks make the merged historical
+range ordered. Repeated merges can combine any number of adjacent OSS results
+before the wallet binds them to its note.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 20, "padding": 5}}}%%
+flowchart TB
+  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+
+  left["$$L:\ \mathtt{Unspent}\\ \{s_L,m_L,\sntl_{s_L},\sntl_{s_L+m_L},\mathsf{Com}(g_L)\}$$"]:::o
+  right["$$R:\ \mathtt{Unspent}\\ \{s_R,m_R,\sntl_{s_R},\sntl_{s_R+m_R},\mathsf{Com}(g_R)\}$$"]:::o
+  merged["$$\mathtt{Unspent}\\ \{s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R},\mathsf{Com}(g_Lg_R)\}$$"]:::o
+  nf["$$\mathtt{Nullifiers}\\ \{\cm,k,r_0,n,\mathsf{Com}(g_n)\}$$"]:::u
+  verified["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R}\}$$"]:::u
+
+  UnspentMerge(["$$\mathsf{UnspentMerge}$$"]):::u
+  UnspentBind(["$$\mathsf{UnspentBind}$$"]):::u
+
+  left --> UnspentMerge
+  right --> UnspentMerge
+  UnspentMerge --> merged
+  merged --> UnspentBind
+  nf --> UnspentBind
+  UnspentBind --> verified
+```
+
+$\mathsf{UnspentBind}$ performs the same [ranged-commitment](#nf-flow)
+indexed-subset check on the merged polynomial as on a single OSS result. The OSSs
+learn only the opaque nullifiers and ranges assigned to them; they do not learn
+$\cm$, the note opening, another OSS's proof, or the eventual spend anchor.
+Request timing and range-selection policy remain wallet-level privacy concerns.
 
 #### Aggregation {#aggregation}
 
-Aggregation folds several finished stamps into one, run by any aggregator or miner.
-It is a distinct step from [`BundleAssemble`](#steps): where `BundleAssemble`
-composes one transaction's `ActionHeader`s into that transaction's stamp,
-aggregation merges the [`StampHeader`](#headers)s of
-already-stamped transactions — the same multiset-union-by-product, one level up.
-Constituents may carry different anchors in epoch $e$. `StampLift` first proves
-each source anchor is an ancestor of a common later anchor, preserving the
-action and tachygram fields. Each constituent's
-stamp can afterward be replaced by a reference to the aggregate's `wtxid`.
+$\mathsf{StampMerge}$ first combines the spend and output stamps within one
+transaction. Network aggregation applies the same operation one level higher,
+merging finished stamps from independently proven transactions.
 
-A valid `StampLift` keeps $e$, the action list, tachygrams, and $\tgacc$
-unchanged, and replaces only $\anchor$ after proving the source anchor is an
-ancestor of the new anchor in the same epoch.
+Constituent stamps may carry different anchors in the same epoch. Before
+merging, the aggregator uses $\mathsf{StampLift}$ and shared
+$\mathtt{AnchorChain}$ evidence to move them to a common later anchor. The lift
+must remain within one epoch: crossing a sentinel would change the active
+nullifier window without proving the intervening exclusion. Once aligned,
+$\mathsf{StampMerge}$ checks equal anchors, unions the action descriptions and
+tachygram multisets, proves the output accumulator is the product of the input
+accumulators, and folds the child proofs.
 
-A valid Aggregation step assures that, given the public input:
+The resulting aggregate stamp has the same shape as a standalone stamp and can
+be merged again. Balance and authorization remain attached to each constituent
+transaction; aggregation neither creates nor removes an action. At block
+construction, covered transactions discard their redundant stamps and refer to
+the aggregate by `wtxid`, as detailed in the [aggregation chapter](./aggregation.md).
 
-- the aligned constituent `StampHeader`s $\set{\mathsf{StampHeader}_k}$, each
-  $(\set{(\cv_i,\rk_i)}_k,\set{\tg_i}_k,\tgacc_k,
-  \anchor,e)$
-- the output aggregate `StampHeader`
-  $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,
-  \anchor,e)$, with the tachygram lists and accumulators
-  unioned
-
-the prover knows:
-
-- the child PCD proofs carried by the constituent `StampHeader`s
-
-such that the following conditions hold:
-
-- **Child proof recursion**: fold the child proofs into the running PCD proof.
-- **Common context**: every constituent shares
-  $(\anchor,e)$.
-- **Multiset union**: $\set{\tg_i}$ is the union of the constituent tachygram
-  lists and $\tgacc=\prod_k\tgacc_k$ is its [multiset accumulator](#union),
-  verified at a random point.
-- **Action aggregation**: the aggregate action list $\set{(\cv_i, \rk_i)}$ concatenates
-  the constituents'.
-
-Value balance and per-action authorization stay *outside* the proof, as in the
-[bundle-level statement](#bundle): the constituents' [binding signatures](#tx) and
-the [consensus anchor check](#consensus-rule) carry over unchanged, since
-aggregation neither creates nor destroys value and only unions already-valid
-tachygram sets.
-
-Stated N-ary over the $\set{\mathsf{StampHeader}_k}$, aggregation folds on the
-binary DAG as a tree of two-input `MergeStamp`s, preceded where necessary by
-`StampLift`.
 
 ## Payment Protocol {#payment}
 
@@ -2051,7 +1901,7 @@ flowchart TB
     check["**Spendability Check**
     Note spendability + Faerie Gold Prevention"]
     wit["**Witness Construction**
-    OSS delegation, Stamp Generation, Authorization"]
+    Cached spendability, delegated exclusion, local lift, stamp assembly"]
     end
 
     subgraph _Shielded Protocol_
@@ -2360,15 +2210,21 @@ it already holds. A malicious sender has two avenues, both blocked:
 
 Witness construction is where the payment protocol's databases feed the shielded
 protocol's [transaction life cycle](#txflow). Having discovered and validated its
-notes, a spender following the delegated flow:
+notes, a wallet:
 
-1. pulls inclusion data for every input from the [epoched tachygram DB](#pirdb),
-   derives a delegated nullifier range, selects a join epoch, and hands the
-   opaque values to an OSS for [spendability syncing](#txflow), while lifting
-   inclusion within its inclusion epoch;
-2. binds the returned proof to its inclusion and derivation branches, brings
-   every action to its target anchor, then folds all spend proofs into
-   a [stamp](#tx), as detailed in the [life cycle](#txflow).
+1. uses creation-stamp data from the [epoched tachygram DB](#pirdb) to build and
+   cache a `SpendableHeader` as soon as the creation block finalizes;
+2. independently extends one local `NullifierHeader` and delegates opaque
+   nullifiers and standardized anchor intervals to one or more OSSs;
+3. binds each returned `UnspentHeader`, advances the cached spendable state, and
+   optionally covers a short Prefix or Infix privately with locally held epoch
+   evidence; and
+4. folds the updated spends and reusable anchorless outputs into a fresh
+   [stamp](#tx), then performs authorization.
+
+A same-epoch spend skips steps 2 and 3. If the wallet crosses an epoch without
+OSS help, it uses the same unspent steps locally rather than a different
+statement.
 
 In short, the shielded protocol defines *what* the witness must prove, and the
 payment protocol supplies the data-availability and private-retrieval layer that
