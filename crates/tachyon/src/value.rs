@@ -21,10 +21,10 @@ pub type Commitment = ValueCommitment;
 pub type Balance = Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>;
 
 /// A non-negative integer not greater than `MAX_MONEY`.
-pub type Positive = Value<0, { MAX_MONEY.cast_signed() }>;
+pub type NonNegative = Value<0, { MAX_MONEY.cast_signed() }>;
 
 /// A non-positive integer not less than `-MAX_MONEY`.
-pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
+pub type NonPositive = Value<{ -MAX_MONEY.cast_signed() }, 0>;
 
 /// Shared with Orchard (§5.4.8.3).
 const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
@@ -100,14 +100,14 @@ impl From<Commitment> for EpAffine {
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Value<const MIN: i64, const MAX: i64>(i64);
 
-impl From<Negative> for Balance {
-    fn from(value: Negative) -> Self {
+impl From<NonPositive> for Balance {
+    fn from(value: NonPositive) -> Self {
         Self(value.0)
     }
 }
 
-impl From<Positive> for Balance {
-    fn from(value: Positive) -> Self {
+impl From<NonNegative> for Balance {
+    fn from(value: NonNegative) -> Self {
         Self(value.0)
     }
 }
@@ -227,16 +227,16 @@ impl ops::Neg for Balance {
     }
 }
 
-impl ops::Neg for Negative {
-    type Output = Positive;
+impl ops::Neg for NonPositive {
+    type Output = NonNegative;
 
     fn neg(self) -> Self::Output {
         self.negate()
     }
 }
 
-impl ops::Neg for Positive {
-    type Output = Negative;
+impl ops::Neg for NonNegative {
+    type Output = NonPositive;
 
     fn neg(self) -> Self::Output {
         self.negate()

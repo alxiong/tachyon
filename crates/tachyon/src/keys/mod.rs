@@ -143,7 +143,7 @@ mod tests {
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(1000u64).unwrap(),
+            value: value::NonNegative::try_from(1000u64).unwrap(),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };

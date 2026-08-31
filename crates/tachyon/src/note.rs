@@ -64,8 +64,9 @@ pub struct Note {
     /// The recipient's payment key.
     pub pk: PaymentKey,
 
-    /// The note value in zatoshis, less than 2.1e15
-    pub value: value::Positive,
+    /// The note value in zatoshis, less than 2.1e15. Zero-value notes
+    /// are legal (e.g. memo-only payments).
+    pub value: value::NonNegative,
 
     /// The nullifier trapdoor ($\psi$).
     pub psi: nullifier::Trapdoor,
@@ -116,26 +117,26 @@ mod tests {
     use crate::{constants::MAX_MONEY, value};
 
     #[test]
-    fn positive_value_accepts_max() {
-        value::Positive::try_from(MAX_MONEY).unwrap();
+    fn non_negative_value_accepts_max() {
+        value::NonNegative::try_from(MAX_MONEY).unwrap();
     }
 
     #[test]
-    fn positive_value_rejects_over_max() {
+    fn non_negative_value_rejects_over_max() {
         assert_eq!(
-            value::Positive::try_from(MAX_MONEY + 1),
+            value::NonNegative::try_from(MAX_MONEY + 1),
             Err(value::OutOfRange)
         );
     }
 
     #[test]
-    fn positive_value_accepts_zero() {
-        value::Positive::try_from(0u64).unwrap();
+    fn non_negative_value_accepts_zero() {
+        value::NonNegative::try_from(0u64).unwrap();
     }
 
     #[test]
-    fn positive_value_rejects_negative() {
-        assert_eq!(value::Positive::try_from(-1i64), Err(value::OutOfRange));
+    fn non_negative_value_rejects_negative() {
+        assert_eq!(value::NonNegative::try_from(-1i64), Err(value::OutOfRange));
     }
 
     /// Different trapdoors produce different commitments.
@@ -147,13 +148,13 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: value::Positive::try_from(100u64).unwrap(),
+            value: value::NonNegative::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: value::Positive::try_from(100u64).unwrap(),
+            value: value::NonNegative::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };

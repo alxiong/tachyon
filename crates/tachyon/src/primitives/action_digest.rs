@@ -61,7 +61,7 @@ mod tests {
         let sk = private::SpendingKey::random(rng);
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(val).unwrap(),
+            value: value::NonNegative::try_from(val).unwrap(),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };

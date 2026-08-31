@@ -375,7 +375,7 @@ fn spend_stamp_rejects_invalid_note() {
     let spend_epoch = height.epoch();
 
     let phantom = Note {
-        value: value::Positive::try_from(999_999u64).expect("test value in range"),
+        value: value::NonNegative::try_from(999_999u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
@@ -387,7 +387,7 @@ fn spend_stamp_rejects_invalid_note() {
         "shared psi yields shared nullifiers"
     );
 
-    let wrong_value = value::Positive::try_from(999_999u64).expect("test value in range");
+    let wrong_value = value::NonNegative::try_from(999_999u64).expect("test value in range");
     assert_ne!(u64::from(wrong_value), u64::from(note.value));
 
     // The nullifier pair binds honestly at SpendBind; the note-level checks
@@ -542,7 +542,7 @@ fn step_accepts_zero_value_note() {
     {
         let zero_note = Note {
             pk: user.pak.derive_payment_key(),
-            value: value::Positive::try_from(0u64).expect("zero is in range"),
+            value: value::NonNegative::try_from(0u64).expect("zero is in range"),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
@@ -667,7 +667,7 @@ fn notes_with_shared_psi_share_nullifiers() {
     let user = WalletSim::new(shared_sk());
     let note_a = user.random_note(500);
     let note_b = Note {
-        value: value::Positive::try_from(700u64).expect("test value in range"),
+        value: value::NonNegative::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note_a
     };
@@ -1720,7 +1720,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
     let phantom = Note {
-        value: value::Positive::try_from(700u64).expect("test value in range"),
+        value: value::NonNegative::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };

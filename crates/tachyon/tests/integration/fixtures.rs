@@ -680,7 +680,7 @@ impl WalletSim {
             .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
             pk,
-            value: value::Positive::try_from(value_amount).expect("fixture value in range"),
+            value: value::NonNegative::try_from(value_amount).expect("fixture value in range"),
             psi: nullifier::Trapdoor::random(notes),
             rcm: note::CommitmentTrapdoor::random(notes),
         }
