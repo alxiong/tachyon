@@ -565,7 +565,7 @@ impl Bundle<ProofStamp> {
                     .map_err(LiftError::AnchorError);
 
                 Some(next_anchor.map(|anchor| {
-                    *scanning_anchor = anchor;
+                    *scanning_anchor = anchor.erase();
                     (prev_anchor, epoch, tachygram_set)
                 }))
             })

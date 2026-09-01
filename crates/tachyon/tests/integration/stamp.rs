@@ -800,7 +800,7 @@ fn lift_over_descriptors_then_verify() {
         .flat_map(|height| pool.block(BlockHeight(height)).stamp_commits())
         .scan(stamp.anchor, |anchor_before, tachygram_set| {
             let witness = (*anchor_before, epoch, tachygram_set);
-            *anchor_before = anchor_before.next_stamp(epoch, &tachygram_set).unwrap();
+            *anchor_before = anchor_before.next_stamp(epoch, &tachygram_set).unwrap().erase();
             Some(witness)
         })
         .collect();

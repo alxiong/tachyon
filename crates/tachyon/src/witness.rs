@@ -77,6 +77,9 @@ pub fn nullifier_fuse(
 
 /// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
 /// tg_set, elapsed_seq)`.
+///
+/// `anchor_prev` is kind-erased: a lineage resting on an epoch's sentinel
+/// legitimately walks a stamp out of it.
 #[must_use]
 pub fn unspent_seed(
     (_left, _right): (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
@@ -95,6 +98,9 @@ pub fn unspent_seed(
 
 /// Prepare the witness for [`EndEpochUnspentSeed`]:
 /// `(anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq)`.
+///
+/// `anchor_prev` is kind-erased: a silent epoch's terminal anchor is itself
+/// the sentinel that opened it.
 #[must_use]
 pub fn end_epoch_unspent_seed(
     (_left, _right): (
@@ -237,6 +243,8 @@ pub fn spend_bind(
 }
 
 /// Prepare the witness for [`AnchorSeed`]: `(start, epoch, stamp_commit)`.
+///
+/// `start` is kind-erased: an epoch's first segment roots on the sentinel.
 #[must_use]
 pub fn anchor_seed(
     (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),

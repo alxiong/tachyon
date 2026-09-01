@@ -163,7 +163,7 @@ impl Step for SpendableInit {
             .next_stamp(creation_epoch, &creation_commit)
             .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((cm, (creation_epoch, present_nf), post_cm_anchor), ()))
+        Ok(((cm, (creation_epoch, present_nf), post_cm_anchor.erase()), ()))
     }
 }
 

@@ -44,8 +44,8 @@ use crate::{
 ///
 /// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
 /// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
-/// boundary domain is distinct and never a chain link; it is folded at a
-/// crossing by [`EndEpochUnspentSeed`].
+/// sentinel (boundary) domain is distinct and never a chain link; it is
+/// folded at a crossing by [`EndEpochUnspentSeed`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
@@ -214,7 +214,7 @@ impl Step for AnchorSeed {
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((start, end), ()))
+        Ok(((start, end.erase()), ()))
     }
 }
 
@@ -320,7 +320,7 @@ impl Step for UnspentSeed {
                 (epoch, nf),
                 elapsed_commit,
                 (epoch, nf),
-                tested_anchor,
+                tested_anchor.erase(),
             ),
             (),
         ))
@@ -328,12 +328,14 @@ impl Step for UnspentSeed {
 }
 
 /// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
-/// the next epoch's opening boundary anchor.
+/// the next epoch's opening sentinel (boundary anchor).
 ///
 /// The segment covers exactly the tick `anchor_prev.next_epoch(epoch_prev +
 /// 1)`, so it covers two epochs and its `elapsed` is the two-member sequence
 /// `[nf_prev, nf]`: the nullifier tested in the epoch being left, and the one
-/// that opens the epoch being entered.
+/// that opens the epoch being entered. The minted tick is statically an
+/// `Anchor<Sentinel>`; `anchor_prev` stays kind-erased because a silent
+/// epoch's terminal anchor is itself the sentinel that opened it.
 ///
 /// # Soundness
 ///
@@ -378,6 +380,8 @@ impl Step for EndEpochUnspentSeed {
         )?;
 
         let epoch = epoch_prev.next();
+        // The minted tick is statically an `Anchor<Sentinel>`; its kind is
+        // erased only at header emission below.
         let anchor = anchor_prev
             .next_epoch(epoch)
             .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
@@ -419,7 +423,7 @@ impl Step for EndEpochUnspentSeed {
                 (epoch_prev, nf_prev),
                 elapsed_commit,
                 (epoch, nf),
-                anchor,
+                anchor.erase(),
             ),
             (),
         ))

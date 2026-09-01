@@ -177,7 +177,7 @@ impl StampState for ProofStamp {
     fn stamp_digest(&self) -> [u8; 64] {
         let stamp_data_digest: [u8; 32] = {
             let proof = self.proof.serialize();
-            let anchor: [u8; 32] = self.anchor.0.into();
+            let anchor: [u8; 32] = Fp::from(self.anchor).into();
 
             // Do NOT sort here: a constructed stamp should already be canonical.
             let tachygrams: Vec<[u8; 32]> = self
@@ -524,6 +524,9 @@ pub struct ProofStamp {
     pub coverage: [u8; 32],
 
     /// The historic pool state for which this stamp is valid.
+    ///
+    /// Kind-erased: the wire carries no kind tag, and a stamp may target a
+    /// sentinel (a stampless epoch-first block's anchor).
     pub anchor: Anchor,
 
     /// The commitment to this stamp's tachygram set.

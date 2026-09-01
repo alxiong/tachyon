@@ -297,7 +297,7 @@ impl PoolSimBlock {
             .map(|tgs| {
                 let stamp_prev = anchor;
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
+                let stamp_after = anchor.next_stamp(epoch, &commit).unwrap().erase();
                 anchor = stamp_after;
                 (stamp_prev, tgs, commit, stamp_after)
             })
@@ -405,7 +405,7 @@ impl PoolSim {
         // Epoch-first blocks are preceded by a boundary anchor lift;
         // intra-epoch blocks advance directly from the previous tip.
         let prev = if new_height.is_epoch_first() {
-            old_tip.next_epoch(new_height.epoch()).unwrap()
+            old_tip.next_epoch(new_height.epoch()).unwrap().erase()
         } else {
             old_tip
         };
@@ -435,7 +435,7 @@ pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
     loop {
         for tgs in &pool.block(height).tachygrams() {
             let witness = witness::anchor_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
+            let next_state = state.next_stamp(witness.1, &witness.2).unwrap().erase();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSeed, witness)
                 .expect("AnchorSeed");
@@ -840,7 +840,7 @@ impl WalletSim {
             let pre_cm_anchor = stamp_commits[..cm_idx]
                 .iter()
                 .fold(pool.block(init_height).prev, |anchor, commit| {
-                    anchor.next_stamp(init_height.epoch(), commit).unwrap()
+                    anchor.next_stamp(init_height.epoch(), commit).unwrap().erase()
                 });
 
             (pre_cm_anchor, stamps[cm_idx].clone())
