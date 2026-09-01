@@ -90,6 +90,9 @@ use alloc::{
 use core::{cell::OnceCell, cmp::Eq as TotalEq, mem, num::NonZero};
 
 use ff::Field as _;
+use maybe_rayon::iter::IntoParallelIterator as _;
+#[cfg(feature = "multicore")]
+use maybe_rayon::iter::ParallelIterator as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 use ragu_arithmetic::poly_mul;
@@ -244,15 +247,28 @@ impl IndexedMultiset {
     }
 
     /// Evaluate the encoded polynomial at `x` by streaming over the members,
-    /// without realizing the coefficients.
+    /// without realizing the coefficients. With the `multicore` feature the
+    /// member factors are computed in parallel. A repeated member contributes
+    /// its factor by square-and-multiply; the (near-universal)
+    /// multiplicity-one case pays no exponentiation at all.
     #[must_use]
     pub(crate) fn eval(&self, x: Fp) -> Fp {
-        self.members
+        let members: Vec<((u64, Fp), NonZero<u32>)> = self
+            .members
             .iter()
-            .fold(Fp::ONE, |product, (&(idx, m), &count)| {
+            .map(|(&key, &count)| (key, count))
+            .collect();
+        members
+            .into_par_iter()
+            .map(|((idx, m), count)| {
                 let factor = direct_eval_single(idx, m, x);
-                (0..count.get()).fold(product, |subtotal, _| subtotal * factor)
+                if count.get() == 1 {
+                    factor
+                } else {
+                    factor.pow([NonZero::<u64>::from(count).get()])
+                }
             })
+            .product()
     }
 
     /// Realize (and memoize) the encoded polynomial in coefficient form.
@@ -372,7 +388,7 @@ mod tests {
     #[test]
     fn streaming_evaluation_matches_the_realization() {
         let rng = &mut StdRng::seed_from_u64(12);
-        for len in 0..6u64 {
+        for len in (0..6u64).chain([32]) {
             let set = random_set(rng, len);
             let x = Fp::random(&mut *rng);
             assert_eq!(set.eval(x), set.realize().eval(x));
