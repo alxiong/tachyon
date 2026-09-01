@@ -1,5 +1,6 @@
 mod action_digest;
 mod anchor;
+pub mod anchor_kind;
 mod block_height;
 pub mod effect;
 mod epoch;
@@ -9,6 +10,7 @@ mod tachygram;
 
 pub use action_digest::{ActionDigest, ActionDigestError};
 pub use anchor::{Anchor, AnchorError};
+pub use anchor_kind::AnchorKind;
 pub use block_height::BlockHeight;
 pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochIndex};
