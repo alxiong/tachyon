@@ -23,6 +23,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use core::iter;
 
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
@@ -33,7 +34,7 @@ use ragu_pasta::Pasta;
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
 use crate::{
-    collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
+    collections::{indexed_multiset::IndexedMultiset, qr::QUADRATIC_NON_RESIDUE},
     digest::poseidon,
     nullifier::Nullifier,
     primitives::{
@@ -714,7 +715,9 @@ impl Step for QrUnspentInit {
         let sequence_commit = sequence.commit();
         let z = ctx.derive_challenge(&[sequence_commit.into(), g0 * Fp::from(value)])?;
         let sequence_at_z = sequence.eval(z);
-        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
+        let member_at_z = iter::once((u64::from(epoch), value.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
         enforce_zero(
             sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested value",

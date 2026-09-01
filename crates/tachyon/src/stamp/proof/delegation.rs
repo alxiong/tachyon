@@ -18,7 +18,7 @@ use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_pasta::PoseidonFp;
 
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     constants::EPOCH_MAX,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
@@ -216,8 +216,10 @@ impl Step for NfDerive {
 
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.
-        let window_at_z =
-            indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
+        let window_at_z = (epoch_start.into()..)
+            .zip(nullifiers.map(Fp::from))
+            .collect::<IndexedMultiset>()
+            .eval(z);
 
         enforce_zero(
             seq_at_z - window_at_z,
