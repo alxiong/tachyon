@@ -261,25 +261,16 @@ pub fn merge_stamp(
     right_actions: &[ActionDigest],
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, MergeStamp> {
-    let merged_action_set = left_actions
-        .iter()
-        .copied()
-        .chain(right_actions.iter().copied())
-        .collect::<ActionSetPoly>();
-    let merged_tg_set = left_tgs
-        .iter()
-        .copied()
-        .chain(right_tgs.iter().copied())
-        .collect::<TachygramSetPoly>();
+    let left_action_set = left_actions.iter().copied().collect::<ActionSetPoly>();
+    let left_tg_set = left_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let right_action_set = right_actions.iter().copied().collect::<ActionSetPoly>();
+    let right_tg_set = right_tgs.iter().copied().collect::<TachygramSetPoly>();
     (
+        (left_action_set.clone(), left_tg_set.clone()),
         (
-            left_actions.iter().copied().collect::<ActionSetPoly>(),
-            left_tgs.iter().copied().collect::<TachygramSetPoly>(),
+            left_action_set.union(&right_action_set),
+            left_tg_set.union(&right_tg_set),
         ),
-        (merged_action_set, merged_tg_set),
-        (
-            right_actions.iter().copied().collect::<ActionSetPoly>(),
-            right_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
+        (right_action_set, right_tg_set),
     )
 }
