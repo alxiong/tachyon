@@ -11,6 +11,10 @@ pub(crate) mod multiset;
 
 fn trim(coeffs: &mut Vec<Fp>) {
     if let Some(last_nonzero_idx) = coeffs.iter().rposition(|co| co != &Fp::ZERO) {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "rposition returns an index below len"
+        )]
         coeffs.truncate(last_nonzero_idx + 1);
     }
 }
@@ -18,8 +22,8 @@ fn trim(coeffs: &mut Vec<Fp>) {
 pub(super) fn poly_mul(input_a: &Polynomial, input_b: &Polynomial) -> Polynomial {
     use ragu_arithmetic as arithmetic;
 
-    let mut a_coeffs = Vec::from_iter(input_a.iter_coeffs());
-    let mut b_coeffs = Vec::from_iter(input_b.iter_coeffs());
+    let mut a_coeffs: Vec<_> = input_a.iter_coeffs().collect();
+    let mut b_coeffs: Vec<_> = input_b.iter_coeffs().collect();
 
     trim(&mut a_coeffs);
     trim(&mut b_coeffs);
