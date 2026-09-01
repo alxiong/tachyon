@@ -322,7 +322,9 @@ impl Step for StampLift {
             "StampLift: segment start must equal stamp old_anchor",
         )?;
 
-        let data = (left_action_commit, left_tachygram_commit, segment_end);
+        // The segment end is statically stamp-produced; its kind is erased
+        // because `StampHeader` anchors admit either kind.
+        let data = (left_action_commit, left_tachygram_commit, segment_end.erase());
         Ok((data, ()))
     }
 }

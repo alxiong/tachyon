@@ -31,6 +31,7 @@ use crate::{
     nullifier::Nullifier,
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
+        anchor_kind::Stamped,
     },
     relations::enforce::enforce_poly_product,
 };
@@ -63,8 +64,9 @@ impl Header for AnchorChain {
     /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`]
     /// and flows to [`super::stamp::StampLift`] which must ultimately be
     /// checked by consensus. `end` is always computed in-circuit as
-    /// `start.next_stamp(epoch, ...)`.
-    type Data = (Anchor, Anchor);
+    /// `start.next_stamp(epoch, ...)` and is therefore statically
+    /// [`Stamped`]: no anchor-chain link is ever a sentinel.
+    type Data = (Anchor, Anchor<Stamped>);
 
     const SUFFIX: Suffix = Suffix::new(5);
 
@@ -214,7 +216,7 @@ impl Step for AnchorSeed {
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((start, end.erase()), ()))
+        Ok(((start, end), ()))
     }
 }
 
