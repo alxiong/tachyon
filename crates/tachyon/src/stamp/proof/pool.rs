@@ -16,6 +16,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use core::iter;
 
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
@@ -26,7 +27,7 @@ use ragu::{
 
 use super::delegation::NullifierDerivation;
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     note::{self},
     nullifier::Nullifier,
     primitives::{
@@ -306,7 +307,9 @@ impl Step for UnspentSeed {
         let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * Fp::from(nf)])?;
         let elapsed_at_z = elapsed_seq.eval(z);
 
-        let member_at_z = indexed_multiset::direct_eval([(epoch.into(), nf.into())], z);
+        let member_at_z = iter::once((epoch.into(), nf.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
 
         enforce_zero(
             elapsed_at_z - member_at_z,
@@ -399,13 +402,13 @@ impl Step for EndEpochUnspentSeed {
         let elapsed_at_z = elapsed_seq.eval(z);
 
         let epoch_prev_idx = u64::from(u32::from(epoch_prev));
-        let crossing_at_z = indexed_multiset::direct_eval(
-            [
-                (epoch_prev_idx, nf_prev.into()),
-                (epoch_prev_idx + 1, nf.into()),
-            ],
-            z,
-        );
+        let crossing_at_z = [
+            (epoch_prev_idx, nf_prev.into()),
+            (epoch_prev_idx + 1, nf.into()),
+        ]
+        .into_iter()
+        .collect::<IndexedMultiset>()
+        .eval(z);
 
         enforce_zero(
             elapsed_at_z - crossing_at_z,
@@ -509,8 +512,9 @@ impl Step for UnspentFuse {
         let left_at_z = left_elapsed_seq.eval(z);
         let right_at_z = right_elapsed_seq.eval(z);
 
-        let junction_at_z =
-            indexed_multiset::direct_eval([(left_epoch_last.into(), left_nf_last.into())], z);
+        let junction_at_z = iter::once((left_epoch_last.into(), left_nf_last.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
         enforce_zero(
             combined_at_z * junction_at_z - left_at_z * right_at_z,
             "UnspentFuse: combined is not the concatenation of the halves",

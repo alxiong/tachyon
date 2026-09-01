@@ -10,6 +10,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use core::iter;
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
@@ -19,7 +20,7 @@ use ragu::{
 
 use super::{delegation::NullifierDerivation, pool::Unspent};
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     note,
     nullifier::Nullifier,
     primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
@@ -140,8 +141,9 @@ impl Step for SpendableInit {
         let nf_seq_at_z = nf_seq.eval(z);
         let complement_at_z = complement_seq.eval(z);
 
-        let read_at_z =
-            indexed_multiset::direct_eval([(creation_epoch.into(), present_nf.into())], z);
+        let read_at_z = iter::once((creation_epoch.into(), present_nf.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
         enforce_zero(
             nf_seq_at_z - read_at_z * complement_at_z,
             "SpendableInit: nullifier does not match the derivation",
