@@ -18,7 +18,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::enforce::{enforce_poly_product, enforce_poly_roots},
+    relations::enforce::with_shared_challenge,
     value,
 };
 
@@ -29,8 +29,9 @@ use crate::{
 /// the action-digest and tachygram sets. Per spec, only stamps carry
 /// the tachygram accumulator (`stamp_tg_commit` = $\mathsf{tgacc}$).
 /// Each leaf step ([`OutputStamp`], [`SpendStamp`]) witnesses both set
-/// polynomials and enforces them against statement-fixed roots at a
-/// Fiat-Shamir challenge (revisit.md `#acc-correct`) — the action set
+/// polynomials and enforces them against statement-fixed roots at the
+/// step's shared Fiat-Shamir challenge (revisit.md `#acc-correct`) —
+/// the action set
 /// against the action the step derives, the tachygram set against the
 /// pair bound on the left bind header. [`MergeStamp`] binds its
 /// witnessed input sets to the child headers and enforces each output
@@ -116,23 +117,25 @@ impl Step for OutputStamp {
             ragu::Error::InvalidWitness("OutputStamp: action digest construction failed".into())
         })?;
 
-        // The action-set commitment commits to exactly the one action this
-        // step derives; the root is in-circuit from the witnessed note above.
-        enforce_poly_roots(
+        // Both witnessed sets open at the step's shared challenge and must
+        // equal the product of their statement-fixed root factors: the action
+        // digest is in-circuit from the witnessed note above; the tachygram
+        // pair rides the bind header, fixed by the recursive verification of
+        // the left PCD.
+        with_shared_challenge(
             ctx,
-            action_set.as_ref(),
-            &[Fp::from(action_digest)],
-            "OutputStamp: action set does not commit to the action",
-        )?;
-
-        // The stamp accumulator commits to exactly the tachygram pair on the
-        // bind header, both roots fixed by the recursive verification of the
-        // left PCD.
-        enforce_poly_roots(
-            ctx,
-            tachygram_set.as_ref(),
-            &[Fp::from(cm), Fp::from(pad)],
-            "OutputStamp: tachygram set does not commit to the bound pair",
+            [action_set.as_ref(), tachygram_set.as_ref()],
+            |z, mut queries| {
+                let [action_at_z, tachygrams_at_z] = queries.open_all(z)?;
+                enforce_zero(
+                    action_at_z - (z - Fp::from(action_digest)),
+                    "OutputStamp: action set does not commit to the action",
+                )?;
+                enforce_zero(
+                    tachygrams_at_z - (z - Fp::from(cm)) * (z - Fp::from(pad)),
+                    "OutputStamp: tachygram set does not commit to the bound pair",
+                )
+            },
         )?;
 
         Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
@@ -194,23 +197,25 @@ impl Step for SpendStamp {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
-        // The action-set commitment commits to exactly the one action this
-        // step derives; the root is in-circuit from the witnessed note above.
-        enforce_poly_roots(
+        // Both witnessed sets open at the step's shared challenge and must
+        // equal the product of their statement-fixed root factors: the action
+        // digest is in-circuit from the witnessed note above; the nullifier
+        // pair rides the bind header, fixed by the recursive verification of
+        // the left PCD.
+        with_shared_challenge(
             ctx,
-            action_set.as_ref(),
-            &[Fp::from(action_digest)],
-            "SpendStamp: action set does not commit to the action",
-        )?;
-
-        // The stamp accumulator commits to exactly the nullifier pair on the
-        // bind header, both roots fixed by the recursive verification of the
-        // left PCD.
-        enforce_poly_roots(
-            ctx,
-            tachygram_set.as_ref(),
-            &[Fp::from(present_nf), Fp::from(nf_next)],
-            "SpendStamp: tachygram set does not commit to the nullifier pair",
+            [action_set.as_ref(), tachygram_set.as_ref()],
+            |z, mut queries| {
+                let [action_at_z, tachygrams_at_z] = queries.open_all(z)?;
+                enforce_zero(
+                    action_at_z - (z - Fp::from(action_digest)),
+                    "SpendStamp: action set does not commit to the action",
+                )?;
+                enforce_zero(
+                    tachygrams_at_z - (z - Fp::from(present_nf)) * (z - Fp::from(nf_next)),
+                    "SpendStamp: tachygram set does not commit to the nullifier pair",
+                )
+            },
         )?;
 
         Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
@@ -275,20 +280,37 @@ impl Step for MergeStamp {
             "MergeStamp: right tachygram accumulator must commit to header commit",
         )?;
 
-        // Confirm union via product-opening relation.
-        enforce_poly_product(
+        // Confirm both unions at the step's shared challenge: all six
+        // commitments are absorbed before it is derived, and each merged set
+        // must open to the product of its inputs' openings.
+        with_shared_challenge(
             ctx,
-            left_action_set.as_ref(),
-            right_action_set.as_ref(),
-            merged_action_set.as_ref(),
-            "MergeStamp: merged action set must be the product of left and right action sets",
-        )?;
-        enforce_poly_product(
-            ctx,
-            left_tachygram_set.as_ref(),
-            right_tachygram_set.as_ref(),
-            merged_tachygram_set.as_ref(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
+            [
+                left_action_set.as_ref(),
+                right_action_set.as_ref(),
+                merged_action_set.as_ref(),
+                left_tachygram_set.as_ref(),
+                right_tachygram_set.as_ref(),
+                merged_tachygram_set.as_ref(),
+            ],
+            |z, mut queries| {
+                let [
+                    left_action,
+                    right_action,
+                    merged_action,
+                    left_tg,
+                    right_tg,
+                    merged_tg,
+                ] = queries.open_all(z)?;
+                enforce_zero(
+                    merged_action - left_action * right_action,
+                    "MergeStamp: merged action set must be the product of left and right action sets",
+                )?;
+                enforce_zero(
+                    merged_tg - left_tg * right_tg,
+                    "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
+                )
+            },
         )?;
 
         Ok((

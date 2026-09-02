@@ -24,7 +24,7 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    relations::enforce::enforce_poly_product,
+    relations::enforce::with_shared_challenge,
 };
 
 /// A note's certified commitment and master key (wallet-only).
@@ -274,12 +274,16 @@ impl Step for NullifierFuse {
             "NullifierFuse: right polynomial does not match header",
         )?;
         let merged_nf_commit = merged_seq.commit();
-        enforce_poly_product(
+        with_shared_challenge(
             ctx,
-            left_seq.as_ref(),
-            right_seq.as_ref(),
-            merged_seq.as_ref(),
-            "NullifierFuse: merged is not the concat of the halves",
+            [left_seq.as_ref(), right_seq.as_ref(), merged_seq.as_ref()],
+            |z, mut queries| {
+                let [left_at_z, right_at_z, merged_at_z] = queries.open_all(z)?;
+                enforce_zero(
+                    merged_at_z - left_at_z * right_at_z,
+                    "NullifierFuse: merged is not the concat of the halves",
+                )
+            },
         )?;
         Ok((
             (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),

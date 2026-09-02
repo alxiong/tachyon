@@ -32,7 +32,7 @@ use crate::{
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },
-    relations::enforce::enforce_poly_product,
+    relations::enforce::with_shared_challenge,
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
@@ -599,12 +599,20 @@ impl Step for UnspentBind {
 
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
-        enforce_poly_product(
+        with_shared_challenge(
             ctx,
-            elapsed_seq.as_ref(),
-            complement_seq.as_ref(),
-            nf_seq.as_ref(),
-            "UnspentBind: sequence does not match the derivation",
+            [
+                elapsed_seq.as_ref(),
+                complement_seq.as_ref(),
+                nf_seq.as_ref(),
+            ],
+            |z, mut queries| {
+                let [elapsed_at_z, complement_at_z, nf_seq_at_z] = queries.open_all(z)?;
+                enforce_zero(
+                    nf_seq_at_z - elapsed_at_z * complement_at_z,
+                    "UnspentBind: sequence does not match the derivation",
+                )
+            },
         )?;
 
         // Defensive: a single-epoch segment's boundary caches coincide.

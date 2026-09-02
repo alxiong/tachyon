@@ -1,120 +1,127 @@
-//! Each relation here is a convenience tool over the two framework hooks a step
-//! body reaches for -- [`StepCtx::enforce_poly_query`] and
-//! [`StepCtx::derive_challenge`]. They share one shape: the result is
-//! prover-supplied (built off-circuit) rather than computed by the relation,
-//! the relation computes each operand's commitment internally, derives a
-//! Fiat-Shamir challenge `z` from those commitments, checks the defining
-//! algebraic identity at `z`, and emits one opening claim per operand at
-//! `(commitment, z, eval(z))`. These functions only *record* the openings;
-//! actually verifying them is the proof system's job, not done here.
+//! Steps confirm relations among committed polynomials through the two
+//! framework hooks [`StepCtx::derive_challenge`] and
+//! [`StepCtx::enforce_poly_query`]; [`with_shared_challenge`] packages the
+//! discipline those hooks demand.
+//!
+//! The shape: the caller lists every committed polynomial operand up front;
+//! the relation commits each one, derives a single challenge `z` from all
+//! the commitments, and hands `z` plus a [`PolyQueries`] handle to the
+//! caller's closure. What to do with the challenge is the caller's: which
+//! operands to open, at which points (the challenge, a statement point,
+//! several points on one operand), and which algebraic identities to check
+//! over the opened evals. Each [`PolyQueries::open`] records the opening
+//! claim `(commitment, point, eval)` and returns that same eval, so the
+//! value checked is the value opened, by construction. The relation only
+//! *records* claims; actually verifying them is the proof system's job, not
+//! done here.
+//!
+//! The challenge is shared deliberately. In practice the proof system grants
+//! a step one evaluation challenge, derived only once the whole transcript
+//! is fixed, so the commitments must all be collected before the challenge
+//! exists and every randomized point check must run at that one point.
+//! Collecting the operands up front models this; deriving a fresh internal
+//! challenge per relation would not survive the real prover. Steps that must
+//! absorb scalar-binding points alongside their commitments (e.g.
+//! `SpendBind`'s `G_0 · nf_next`) still derive their challenge inline, under
+//! the same collect-first discipline.
 //!
 //! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
-//! into `z`, so the operands are fixed *before* `z` exists and the identity at
-//! a random `z` pins the corresponding polynomial identity (error `~deg/|F|`).
-//! An input that is **not** a committed operand (a raw scalar, say) is not
-//! absorbed into `z` and is not pinned this way; a relation that takes such an
-//! input states its own precondition.
+//! into `z`, so the operands are fixed *before* `z` exists, and an identity
+//! among openings at a random `z` pins the corresponding polynomial identity
+//! (a union bound over the closure's checks, error `~Σ deg/|F|`). An input
+//! that is **not** a committed operand (a raw scalar, say) is not absorbed
+//! into `z` and is not pinned this way: it must already be statement-fixed
+//! -- a header-bound value, a value derived in-circuit from bound values, or
+//! a free scalar pinned by a binding point absorbed into some challenge --
+//! and the call site states each such input's pin.
 //!
 //! # Caller obligation: binding
 //!
-//! These relations prove the identity among the polynomials passed; pinning
+//! The openings prove identities among the polynomials passed; pinning
 //! *which* polynomials those are is the caller's job. Every operand the
 //! surrounding statement relies on must have its commitment grounded in a
 //! statement-fixed value -- a public input, a prior-step output, a
-//! transcript/header-absorbed value, or a consensus/output-checked commitment
-//! -- and the binding holds only once that chain actually terminates in such a
-//! value (a fresh witness, or a commitment merely threaded onward, is not
-//! itself enough). The binding target is the commitment *point*
-//! (`= operand.commit()`); trailing-zero coefficients collapse under
-//! [`Polynomial::commit`], so this is commitment-identity, not the literal
-//! coefficient vector.
+//! transcript/header-absorbed value, or a consensus/output-checked
+//! commitment -- and the binding holds only once that chain actually
+//! terminates in such a value (a fresh witness, or a commitment merely
+//! threaded onward, is not itself enough). The binding target is the
+//! commitment *point* (`= operand.commit()`); trailing-zero coefficients
+//! collapse under [`Polynomial::commit`], so this is commitment-identity,
+//! not the literal coefficient vector.
 //!
-//! This principle is common to all of these relations; each states which
-//! operands it covers and any relation-specific nuance.
-//!
-//! Implementation invariant: the eval fed to each identity check is the same
-//! eval emitted in that operand's opening claim (one `operand.eval(z)` call per
-//! operand). A refactor that recomputed or separately witnessed the evals could
-//! let the checked value diverge from the opened one and break soundness.
+//! Implementation invariant: an eval enters an identity check only as an
+//! [`PolyQueries::open`] return value, which is the eval recorded in that
+//! opening's claim. A closure must never evaluate a polynomial itself -- a
+//! recomputed or separately witnessed eval could diverge from the opened one
+//! and break soundness.
 
-use pasta_curves::Fp;
+use ff::Field as _;
+use pasta_curves::{Eq, Fp};
 use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
 
-/// Faithful polynomial product: confirm `product = multiplicand · multiplier`
-/// among three committed polynomials by opening all three at a Fiat-Shamir
-/// challenge.
-///
-/// `product` is prover-supplied and the relation works only from the three
-/// commitments and their openings at `z` -- it does not multiply the inputs.
-/// The point-wise identity `product(z) = multiplicand(z)·multiplier(z)` at a
-/// random `z` confirms the relation: with every operand committed and absorbed
-/// into `z`, the difference `product − multiplicand·multiplier` is a fixed
-/// polynomial pinned to zero by Schwartz-Zippel.
-///
-/// # Caller obligation (soundness)
-///
-/// Every operand is committed and absorbed into `z`, so the module-level
-/// binding obligation -- here applying symmetrically to `multiplicand`,
-/// `multiplier`, and `product` -- is the only precondition.
-pub(crate) fn enforce_poly_product(
-    ctx: &mut StepCtx<'_>,
-    multiplicand: &Polynomial,
-    multiplier: &Polynomial,
-    product: &Polynomial,
-    err: &'static str,
-) -> Result<()> {
-    let multiplicand_com = multiplicand.commit();
-    let multiplier_com = multiplier.commit();
-    let product_com = product.commit();
-    let z = ctx.derive_challenge(&[multiplicand_com, multiplier_com, product_com])?;
-
-    if product.eval(z) != multiplicand.eval(z) * multiplier.eval(z) {
-        return Err(Error::InvalidWitness(err.into()));
-    }
-
-    ctx.enforce_poly_query(multiplicand_com, z, multiplicand.eval(z))?;
-    ctx.enforce_poly_query(multiplier_com, z, multiplier.eval(z))?;
-    ctx.enforce_poly_query(product_com, z, product.eval(z))?;
-
-    Ok(())
+/// The committed operands of one shared-challenge session: opens operands at
+/// caller-chosen points, recording one claim per opening.
+pub(crate) struct PolyQueries<'ctx, 'step, 'poly, const N: usize> {
+    ctx: &'ctx mut StepCtx<'step>,
+    operands: [&'poly Polynomial; N],
+    commits: [Eq; N],
 }
 
-/// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
-/// given roots by opening the accumulator at a Fiat-Shamir challenge and
-/// comparing against the product computed in cheap field operations (the
-/// batched verification of revisit.md `#acc-correct`).
-///
-/// `accumulator` is prover-supplied and the relation works only from its
-/// commitment and opening at `z` -- it does not interpolate the roots. The
-/// point-wise identity `accumulator(z) = ∏ᵢ (z − rootᵢ)` at a random `z`
-/// confirms the relation: with the accumulator committed and absorbed into
-/// `z`, the difference `accumulator − ∏ᵢ (X − rootᵢ)` is a fixed polynomial
-/// pinned to zero by Schwartz-Zippel.
-///
-/// # Caller obligation (soundness)
-///
-/// Only the accumulator is committed and absorbed into `z`; the module-level
-/// binding obligation applies to it. The roots are raw scalars and are *not*
-/// absorbed: each must already be pinned before this relation contributes
-/// anything -- a header-bound value, a value derived in-circuit from bound
-/// values, or a free scalar bound by one of the step's other challenges. The
-/// call site states each root's pin.
-pub(crate) fn enforce_poly_roots(
-    ctx: &mut StepCtx<'_>,
-    accumulator: &Polynomial,
-    roots: &[Fp],
-    err: &'static str,
-) -> Result<()> {
-    let accumulator_com = accumulator.commit();
-    let z = ctx.derive_challenge(&[accumulator_com])?;
+impl<const N: usize> PolyQueries<'_, '_, '_, N> {
+    /// Open operand `index` at `point`: records the opening claim
+    /// `(commitment, point, eval)` and returns the eval -- the one value
+    /// that is both checked and opened.
+    ///
+    /// Errors on an out-of-range index (a call-site bug).
+    pub(crate) fn open(&mut self, index: usize, point: Fp) -> Result<Fp> {
+        let (operand, commit) = self
+            .operands
+            .get(index)
+            .zip(self.commits.get(index))
+            .ok_or_else(|| Error::InvalidWitness("poly query index out of range".into()))?;
 
-    let accumulator_at_z = accumulator.eval(z);
-    let factors_at_z: Fp = roots.iter().map(|&root| z - root).product();
-    if accumulator_at_z != factors_at_z {
-        return Err(Error::InvalidWitness(err.into()));
+        let eval = operand.eval(point);
+        self.ctx.enforce_poly_query(*commit, point, eval)?;
+        Ok(eval)
     }
 
-    ctx.enforce_poly_query(accumulator_com, z, accumulator_at_z)?;
+    /// Open every operand at `point` (typically the shared challenge),
+    /// returning the evals in operand order.
+    pub(crate) fn open_all(&mut self, point: Fp) -> Result<[Fp; N]> {
+        let mut evals = [Fp::ZERO; N];
+        for (index, eval) in evals.iter_mut().enumerate() {
+            *eval = self.open(index, point)?;
+        }
+        Ok(evals)
+    }
+}
 
-    Ok(())
+/// Derive the step's shared Fiat-Shamir challenge over the given committed
+/// operands, then run the caller's point checks.
+///
+/// Commits every operand, derives one challenge `z` absorbing all the
+/// commitments, and calls `checks(z, queries)`: the closure opens whichever
+/// operands its identities need, at `z` or at statement-fixed points, via
+/// the [`PolyQueries`] handle, and states each identity as an
+/// `enforce_zero`-style equation over the opened evals, `z`, and any
+/// statement-fixed scalars it captures.
+///
+/// A step calls this once, listing every committed operand its point checks
+/// touch, so all of them share the step's single challenge.
+pub(crate) fn with_shared_challenge<'poly, const N: usize>(
+    ctx: &mut StepCtx<'_>,
+    operands: [&'poly Polynomial; N],
+    checks: impl FnOnce(Fp, PolyQueries<'_, '_, 'poly, N>) -> Result<()>,
+) -> Result<()> {
+    let commits = operands.map(Polynomial::commit);
+    let z = ctx.derive_challenge(&commits)?;
+
+    checks(
+        z,
+        PolyQueries {
+            ctx,
+            operands,
+            commits,
+        },
+    )
 }
