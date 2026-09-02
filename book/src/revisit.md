@@ -663,20 +663,20 @@ later-epoch spend, the wallet advances the cached proof to a newer anchor by
 folding authenticated exclusion evidence into it.
 
 A **Tachyon Stamp** provides a PCD proof that every action in the bundle is
-valid and that the published tachygrams and accumulator match those actions.
-Its public inputs are the bundle's Action descriptions, a set of tachygrams
-$\set{\tg_i}$, their accumulator $\tgacc$, and a target $\anchor$
-in the [anchor chain](#anchor). The target epoch is implied by that anchor.
+valid and that the action and tachygram accumulators match those actions.
+Its PCD header is the fixed-size tuple $(\actacc,\tgacc,\anchor)$. The stamp
+also publishes the tachygram multiset $\set{\tg_i}$. The target epoch is implied
+by the target $\anchor$ in the [anchor chain](#anchor).
 Alternatively, the stamp holds a `wtxid` reference to another transaction whose
 stamp carries an aggregated PCD proof and the corresponding public inputs.
 The accumulator is included to spare miners from recomputing it over all
 tachygrams; instead, the correctness of $\tgacc$ is proven using the
 [batched verification trick](#acc-correct).
 The PCD construction supports aggregating finished bundle proofs: a new
-aggregated transaction will be created whose stamp contains the union of
-tachygrams, the accumulator of that union, the common anchor, and an aggregated
-PCD proof. The stamps of all constituent transactions are replaced by a
-reference to the aggregated transaction's `wtxid`.
+aggregated transaction will be created whose stamp contains the union of the
+action and tachygram multisets, their accumulators, the common anchor, and an
+aggregated PCD proof. The stamps of all constituent transactions are replaced
+by a reference to the aggregated transaction's `wtxid`.
 
 > Note: an aggregated Tachyon bundle shares exactly the same format as a normal
 > standalone bundle (a.k.a. a _Tachyon autonome_), and may even carry additional
@@ -719,22 +719,22 @@ identifier `txid`: a bundle commitment from each pool and their value balance
 $v^{\mathsf{bal}}$. In-band memos count as effecting data in the legacy pools,
 and they remain so in the Tachyon pool, entering `txid` through the `da_digest`
 described below.
-The Tachyon bundle commitment $\actacc$ is an order-committing,
-personalized hash over the Action descriptions in wire order:
+Each Action description is first mapped to a field element:
 
 $$
-\actacc = H\bigl( (\cv_1, \rk_1) \,\|\, (\cv_2, \rk_2) \,\|\, \ldots \,\|\, (\cv_n, \rk_n) \bigr)
+a_i = \mathsf{Poseidon}(\rk_i, \cv_i).
 $$
 
-A plain hash suffices here: `txid` needs no algebraic structure, and committing
-to the wire order (as ZIP-244 digests do) keeps `txid` in one-to-one
-correspondence with the serialized effecting data.[^actacc]
+The Action multiset and its polynomial commitment are
 
-[^actacc]: An earlier draft realized $\actacc$ as a polynomial accumulator
-    $\mathsf{Com}(\prod_i(X - a_i))$ with $a_i = H(\cv_i, \rk_i)$, mirroring the
-    tachygram accumulator. That algebraic form is only needed where a *proof*
-    consumes the action set; for a transaction identifier it buys nothing and
-    drags group operations into `txid` derivation.
+$$
+f^\mathsf{act}(X) = \prod_i (X-a_i),
+\qquad
+\actacc = \mathsf{Com}(f^\mathsf{act}(X)).
+$$
+
+Repeated Action descriptions contribute repeated factors. The canonical
+encoding of $\actacc$ enters the Tachyon bundle commitment directly.
 
 All mutable parts (orange in the diagram) commit only to the `auth_digest`, and
 hence transitively to `wtxid = txid || auth_digest`; only the stable parts
@@ -1161,13 +1161,14 @@ The transaction flow is as follows:
    historical anchors, require no synchronization, and can be constructed when
    the transaction is prepared. The wallet folds all action proofs into one
    [Tachyon stamp](#tx). The stamp contains the aggregated PCD proof and public
-   input
+   header
 
    $$
-   (\{(\cv_i,\rk_i)\},\{\tg_i\},\tgacc,\anchor).
+   (\actacc,\tgacc,\anchor).
    $$
 
-   The bundle accumulator $\tgacc$ commits to *two tachygrams per action*:
+   The stamp separately publishes $\{\tg_i\}$. The bundle accumulator $\tgacc$
+   commits to *two tachygrams per action*:
    $(\nf_e,\nf_{e+1})$ for a spend and $(\cm,\tg_\bot)$ for an output. Revealing
    both adjacent nullifiers protects the transaction against the
    [cross-epoch race](#race) while it waits in the mempool. The wallet may also
@@ -1190,10 +1191,10 @@ The transaction flow is as follows:
 5. **Mempool and aggregation.** The finished transaction enters the mempool as a
 standalone Tachyon bundle. A miner or another aggregator may lift several stamps
 whose anchors lie in the same epoch to a common later anchor, take the
-[multiset union](#union) of their tachygrams, combine their accumulators, and
-produce one aggregated PCD proof. Each constituent stamp is replaced by a
-reference to the aggregate transaction's `wtxid`; the aggregate carries the
-combined tachygrams, accumulator, anchor, and proof.
+[multiset union](#union) of their actions and tachygrams, combine both
+accumulators, and produce one aggregated PCD proof. Each constituent stamp is
+replaced by a reference to the aggregate transaction's `wtxid`; the aggregate
+carries the combined tachygrams, accumulators, anchor, and proof.
 
 #### Consensus Validation {#consensus-rule}
 
@@ -1201,18 +1202,19 @@ The bundle balance check and authorization-signature validation are unchanged
 from Orchard. Tachyon adds stamp verification and a live tachygram-duplicate
 window.
 
-**Stamp verification.** Given the published tachygrams $\set{\tg_i}$, accumulator
-$\tgacc$, and $\anchor$, the validator:
+**Stamp verification.** Given $\actacc$, the published tachygrams
+$\set{\tg_i}$, $\tgacc$, and $\anchor$, the validator:
 
 1. checks that the target $\anchor$ occurs in canonical chain history and
    obtains $e=\mathsf{Epoch}(\anchor)$.
 2. confirms $e$ is either the current or the preceding epoch:
    $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$.
-3. verifies the stamp's PCD proof against
-   $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\anchor)$. The proof enforces
-   $\tgacc$'s consistency with the published $\set{\tg_i}$, the integrity of the
-   revealed nullifiers and output commitments, and the initial inclusion and
-   past exclusion of every spent note.
+3. confirms that $\actacc$ commits to the Poseidon digests of the covered
+   Action descriptions and that $\tgacc$ commits to $\set{\tg_i}$.
+4. verifies the stamp's PCD proof against the header
+   $(\actacc,\tgacc,\anchor)$. The proof enforces the integrity of both
+   accumulators, the revealed nullifiers and output commitments, and the initial
+   inclusion and past exclusion of every spent note.
 
 <p align="center">
   <a href="./assets/consensus_window.svg">
@@ -1410,10 +1412,10 @@ such that the following conditions hold:
 #### Bundle-level Statement {#bundle}
 
 The bundle statement glues the per-action statements together. Given the public
-input:
+header and published tachygrams:
 
 - $\anchor$: the common target anchor, which implies the target epoch;
-- $\set{(\cv_i,\rk_i)}$: the list of [Action descriptions](#tx);
+- $\actacc$: the [Action multiset](#tx) commitment;
 - $\set{\tg_i}$: the associated tachygram multiset, two tachygrams per action;
   and
 - $\tgacc$: their accumulator, a PCS commitment to
@@ -1423,8 +1425,8 @@ it attests that:
 
 - **Per-action satisfiability**: every [Spend](#spend) statement holds at the
   common target $\anchor$, and every [Output](#output) statement holds.
-- **Action-description integrity**: the public action-description list is
-  exactly the descriptions emitted by those statements, in wire order.
+- **Action-multiset integrity**: hashing each emitted $(\rk_i,\cv_i)$ with
+  Poseidon produces exactly the multiset committed by $\actacc$.
 - **Tachygram association**: each action contributes exactly its statement's
   pair—$(\nf_e,\nf_{e+1})$ for a spend or $(\cm,\tg_\bot)$ for an output—and
   these pairs form exactly the published multiset $\set{\tg_i}$.
@@ -1597,10 +1599,10 @@ flowchart TB
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
   spendable["$$\mathtt{Spendable}\\ \{\cm, e, \anchor\}$$"]:::u
-  spendstamp["$$\mathtt{SpendStamp}\\ \{\rk,\cv, \nf_e, \nf_{e+1}, \anchor, \acc^\tg \}$$"]:::u
-  outputstamp["$$\mathtt{OutputStamp}\\ \{\rk,\cv, \cm, \cm_\bot, \anchor, \acc^\tg \}$$"]:::u
-  stamp["$$\mathtt{Stamp}\\ \left\{ \{(\rk_i,\cv_i)\}, \{\tg_i\}, \anchor, \acc^\tg \right\}$$"]:::u
-  stampprime["$$\mathtt{Stamp}\\ \{ \cdot, \cdot, \anchor', \cdot \}$$"]:::u
+  spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
+  outputstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
+  stamp["$$\mathtt{Stamp}\\ \{\actacc',\tgacc',\anchor\}$$"]:::u
+  stampprime["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor'\}$$"]:::u
   anc["$$\mathtt{AnchorChain}\\ \{\anchor_L,\anchor_R,\{R_j\},\v{b},\mathsf{Com}(q^\anchor_{\v{b}})\}$$"]:::s
 
   SpendableInit(["$$\mathsf{SpendableInit}$$"]):::u
@@ -1618,6 +1620,11 @@ flowchart TB
   anc --> StampLift
   StampLift --> stampprime
 ```
+
+Each spend or output leaf emits a $\mathtt{Stamp}$ header whose $\actacc$
+commits to the single root $\mathsf{Poseidon}(\rk,\cv)$ and whose $\tgacc$
+commits to that action's two tachygrams. $\mathsf{StampMerge}$ multiplies both
+input multiset polynomials and emits their two commitments.
 
 Normally, $\mathtt{Spendable}$ requires inclusion and all required past
 exclusion through $\mathtt{Spendable}.\anchor$. For the inclusion epoch,
@@ -1653,8 +1660,8 @@ these sub-statements respectively:
   past nullifier exclusion is unnecessary in the inclusion epoch.
 - $\mathsf{SpendBind}$: integrity of $\cv, \cm, \pk$, value range of $v$,
   spend authority $\rk$, and spend-time nullifier integrity $\nf_e, \nf_{e+1}$.
-- $\mathsf{StampMerge}$: ensures accumulator integrity $\acc^\tg$ at the
-  bundle-level.
+- $\mathsf{StampMerge}$: ensures action and tachygram accumulator integrity at
+  the bundle level.
 - $\mathsf{StampLift}$: proves same-epoch ancestry from the stamp's old anchor to
   its target $\anchor$.
 
@@ -1706,7 +1713,7 @@ flowchart TB
   tg["$$\mathtt{Tachygrams}\\ \{\sntl_i,\sntl_{i+1},\{R_j\},\v{b},\mathsf{Com}(q^\tg_{\v{b}})\}$$"]:::s
   spendable["$$\mathtt{Spendable}\\ \{\cm, e_\incl + 1, \sntl_{e_\incl+1}\}$$"]:::u
   spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_0+m,\sntl_{s_0+m}\}$$"]:::u
-  spendstamp["$$\mathtt{SpendStamp}\\ \{\rk,\cv, \nf_e, \nf_{e+1}, \anchor, \acc^\tg \}$$"]:::u
+  spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   ancincl["$$\mathtt{AnchorChain}\\ \{\sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\anchor_{\v{b}}(X)) \}$$"]:::s
   tgincl["$$\mathtt{Tachygrams}\\ \{ \sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\tg_{\v{b}}(X))\}$$"]:::s
 
@@ -1881,8 +1888,8 @@ merging, the aggregator uses $\mathsf{StampLift}$ and shared
 $\mathtt{AnchorChain}$ evidence to move them to a common later anchor. The lift
 must remain within one epoch: crossing a sentinel would change the active
 nullifier window without proving the intervening exclusion. Once aligned,
-$\mathsf{StampMerge}$ checks equal anchors, unions the action descriptions and
-tachygram multisets, proves the output accumulator is the product of the input
+$\mathsf{StampMerge}$ checks equal anchors, unions the action and tachygram
+multisets, proves each output accumulator is the product of its input
 accumulators, and folds the child proofs.
 
 The resulting aggregate stamp has the same shape as a standalone stamp and can
