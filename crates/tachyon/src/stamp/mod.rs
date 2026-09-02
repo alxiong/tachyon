@@ -859,14 +859,18 @@ impl ProofStamp {
     /// stamp could publish a list omitting a nullifier the accumulator
     /// contains, which is what the two-epoch duplicate scan reads.
     ///
-    /// TODO(acc-correct): this recomputes the commitment by realization and
-    /// MSM. The spec's batched alternative -- derive `r` by Fiat-Shamir from
-    /// `tachygram_set`, compute `y_r = ∏ (r - tg_i)` over the published list
-    /// in cheap field operations, and verify the evaluation claim
-    /// `(tachygram_set, r, y_r)` -- requires the proof system to verify
-    /// opening claims at `verify` time, which mock ragu does not yet do (the
-    /// claims steps record via `enforce_poly_query` are discarded at fuse
-    /// time).
+    /// TODO: this recomputes the commitment by realization and MSM. The
+    /// cheaper batched alternative -- derive `r` by Fiat-Shamir from
+    /// `tachygram_set` *and the published list*, compute `y_r = ∏ (r - tg_i)`
+    /// over the list in field operations only, and verify the evaluation
+    /// claim `(tachygram_set, r, y_r)` against the proof -- requires the
+    /// proof system to verify evaluation claims at `verify` time, which mock
+    /// ragu does not yet do (the claims steps record via `enforce_poly_query`
+    /// are discarded at fuse time). The challenge must absorb the published
+    /// list, and no claim recorded inside a step can substitute: a step
+    /// challenge predates the list, and once `(z, f(z))` is public a forger
+    /// can fit a fake list satisfying the product identity by solving for a
+    /// single element.
     #[must_use]
     fn is_accumulating(&self) -> bool {
         self.tachygrams

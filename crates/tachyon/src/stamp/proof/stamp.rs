@@ -26,16 +26,14 @@ use crate::{
 /// transactions.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets. Per spec, only stamps carry
-/// the tachygram accumulator (`stamp_tg_commit` = $\mathsf{tgacc}$).
-/// Each leaf step ([`OutputStamp`], [`SpendStamp`]) witnesses both set
-/// polynomials and enforces them against statement-fixed roots at the
-/// step's shared Fiat-Shamir challenge (revisit.md `#acc-correct`) —
-/// the action set
-/// against the action the step derives, the tachygram set against the
-/// pair bound on the left bind header. [`MergeStamp`] binds its
-/// witnessed input sets to the child headers and enforces each output
-/// commitment as the product of its inputs.
+/// the action-digest and tachygram sets. Each leaf step
+/// ([`OutputStamp`], [`SpendStamp`]) witnesses both set polynomials
+/// and enforces them against statement-fixed roots at the step's
+/// shared Fiat-Shamir challenge — the action set against the action
+/// the step derives, the tachygram set against the pair bound on the
+/// left bind header. [`MergeStamp`] binds its witnessed input sets to
+/// the child headers and enforces each output commitment as the
+/// product of its inputs.
 ///
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
 /// it threads from the left [`SpendHeader`]; at [`MergeStamp`]
@@ -47,9 +45,9 @@ pub struct StampHeader;
 
 impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
-    /// are enforced at each producing step per revisit.md
-    /// `#acc-correct` against that step's action and the left bind
-    /// header's tachygram pair. `anchor` is freely witnessed at
+    /// are enforced at each producing step against that step's action
+    /// and the left bind header's tachygram pair. `anchor` is freely
+    /// witnessed at
     /// [`OutputStamp`], threaded from the left [`SpendHeader`] at
     /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
     /// advanced over an [`AnchorChain`] at [`StampLift`].
