@@ -892,11 +892,12 @@ buckets by a rule that (i) a nullifier can cheaply prove it follows and (ii)
 splits the field nearly evenly. Then $\nf_e$ falls into exactly one bucket, and
 it can only ever collide with the tachygrams sharing that bucket. Thus,
 non-membership across the whole epoch collapses to non-membership against a
-*single* bucket's accumulator, holding only $\approx N/2^k$ entries. To enforce a
-maximum bucket size $B$, we dynamically increase $k$ as needed and split any
-oversized bucket under another independent filter.
-Quadratic residues give us exactly such a rule to distribute $N$ tachygrams
-nearly evenly in expectation.
+*single* bucket's accumulator, holding only $\approx N/2^k$ entries. We first
+collect the epoch into bounded, unfiltered input buckets, then pass pairs of
+buckets through a $k$-layer partition network. Each layer applies one new
+filter, and the final buckets are indexed by their $k$ filter outcomes.
+Quadratic residues provide filters that are cheap to prove and distribute the
+$N$ tachygrams nearly evenly in expectation.
 
 #### A number theory detour
 
@@ -918,8 +919,8 @@ $$
 A **QR filter** is one such split with a random offset: draw $R \sample \F$ and
 classify $x$ by whether $x + R$ is a square, assigning the exceptional value
 $x=-R$ to the residue side. A random offset cuts any fixed epoch set roughly in
-half, and $k$ independent offsets $R_1, \ldots, R_k$ tag every element with a
-$k$-bit **QR profile** $\v{b} = (b_1, \ldots, b_k) \in \{0,1\}^k$, where $b_j=1$
+half, and $k$ independent offsets $R_0, \ldots, R_{k-1}$ tag every element with a
+$k$-bit **QR profile** $\v{b} = (b_0, \ldots, b_{k-1}) \in \{0,1\}^k$, where $b_j=1$
 iff $x+R_j$ is a square or zero (written as $x\in\QR_{R_j}$), and $b_j=0$
 otherwise (written as $x\in\NQR_{R_j}$). The $k$ filters together sort the field
 into $2^k$ disjoint buckets of roughly equal size in expectation.
@@ -962,30 +963,40 @@ h(X) = \frac{g(X)^2 - c\cdot (X + R)}{\prod_i (X - x_i)}
 c\in\NQR,\quad \forall x_i\in\NQR_R
 $$
 
-#### QR Decomposition Test {#qr-decomp}
+#### QR-based Partition {#partition}
 
 With the [batched QR test](#batch-qr) above, we can construct an interactive
-oracle reduction from a QR decomposition instance to PCS evaluation instances.
+oracle reduction from a QR-based partition instance to PCS evaluation instances.
 
-Define the QR decomposition relation for any square-free accumulator as
-follows, where $c\in\NQR$ is a fixed public non-residue:
+Define the **QR-based partition** relation for a pair of accumulators as follows.
+Let $c\in\NQR$ be a fixed public quadratic non-residue.
 
 $$
 \left\{ \left(
 \begin{aligned}
-    \mathtt{x} &:= \cm_p, \cm_{p_1}, \cm_{p_2} \in\G,\, R\in\F; \\
-\mathtt{w} &:= \{x_i\}\in\F^N
+    \mathtt{x} &:= \cm_{p_0}, \cm_{p_1}, \cm_{q_0}, \cm_{q_1} \in\G,\, R\in\F; \\
+    \mathtt{w} &:= S_0,S_1
 \end{aligned}
 \right):\quad
 \begin{aligned}
-& p_1(X) = \prod_{x_i \in \QR_R} (X - x_i) \\
-& p_2(X) = \prod_{x_i \in \NQR_R} (X - x_i) \\
-& \cm_{p_1} = \mathsf{Com}(p_1(X)) \\
-& \cm_{p_2} = \mathsf{Com}(p_2(X)) \\
-& \cm_p = \mathsf{Com}(\prod_{i=0}^{N-1} (X - x_i))
+& p_0(X) = \prod_{x_i\in S_0} (X - x_i),\quad p_1(X) = \prod_{x_i\in S_1} (X - x_i) \\
+& q_0(X) = \prod_{x_i \in (S_0 \cup S_1) \cap \NQR_R} (X - x_i) \\
+& q_1(X) = \prod_{x_i \in (S_0 \cup S_1) \cap \QR_R} (X - x_i) \\
+& \cm_{p_0} = \mathsf{Com}(p_0(X)),\quad \cm_{p_1} = \mathsf{Com}(p_1(X)) \\
+& \cm_{q_0} = \mathsf{Com}(q_0(X)),\quad \cm_{q_1} = \mathsf{Com}(q_1(X))
 \end{aligned}
 \right\}
 $$
+
+This relation rearranges $S_0\cup S_1$ without adding or removing elements. The
+left output contains exactly its $\NQR_R$ elements, and the right output contains
+exactly its $\QR_R$ elements.
+
+<p align="center">
+  <a href="./assets/pair_partition.svg">
+    <img src="./assets/pair_partition.svg" alt="Pair-partition on a QR filter" />
+  </a>
+</p>
 
 The reduction works as follows:
 
@@ -993,90 +1004,104 @@ The reduction works as follows:
   $$
   \begin{aligned}
   g^\QR(x_i) &= y_i &\qquad\text{where }
-      \forall x_i \in \QR_R \,\land\, x_i + R = y_i^2\\
+      \forall x_i \in \QR_R \cap (S_0\cup S_1),\quad x_i + R = y_i^2\\
   g^\NQR(x_i) &= y_i &\qquad\text{where }
-      \forall x_i \in \NQR_R \,\land\, c\cdot (x_i + R) = y_i^2
+      \forall x_i \in \NQR_R \cap (S_0\cup S_1),\quad c\cdot (x_i + R) = y_i^2
   \end{aligned}
   $$
 - Prover computes $h^\QR(X), h^\NQR(X)$ as:
   $$
   \begin{aligned}
-  h^\QR(X) &= \frac{g^\QR(X)^2 - (X + R)}{p_1(X)} \\
-  h^\NQR(X) &= \frac{g^\NQR(X)^2 - c\cdot (X + R)}{p_2(X)}
+  h^\QR(X) &= \frac{g^\QR(X)^2 - (X + R)}{q_1(X)} \\
+  h^\NQR(X) &= \frac{g^\NQR(X)^2 - c\cdot (X + R)}{q_0(X)}
   \end{aligned}
   $$
-  Prover sends commitments of $g^\QR(X), g^\NQR(X), h^\QR(X), h^\NQR(X)$
-  to the Verifier.
-- Verifier samples a challenge $r\sample\F$, conducts the two quotient checks at
-  $r$, and checks $p(r)\iseq p_1(r)\cdot p_2(r)$. This reduces to PCS evaluation
-  claims on $7$ polynomials at the same evaluation point $r$.
-- Verifier also opens $p_2$ at the fixed point $-R$ and checks
-  $p_2(-R)\neq0$.
+  The prover commits to these four polynomials.
+- After all commitments are fixed, the verifier samples $r\sample\F$ and checks
+  $$
+  \begin{aligned}
+  p_0(r)\cdot p_1(r) &\iseq q_0(r)\cdot q_1(r),\\
+  g^\QR(r)^2-(r+R) &\iseq q_1(r)\cdot h^\QR(r),\\
+  g^\NQR(r)^2-c\cdot(r+R) &\iseq q_0(r)\cdot h^\NQR(r).
+  \end{aligned}
+  $$
+- The verifier also opens $q_0$ at $-R$ and requires $q_0(-R)\neq0$.
 
-The final check assigns the exceptional value $x=-R$, whose shift is zero, to
-$\QR_R$. The non-residue quotient identity alone cannot distinguish it: $y=0$
-would satisfy $y^2=c(x+R)=0$. Since $p_2$ is a product of linear factors,
-$p_2(-R)\neq0$ proves that $-R$ is absent from the proclaimed non-residue set.
-Together with $p(X)=p_1(X)\cdot p_2(X)$, this forces it into $p_1$ whenever it
-occurs.
+The fixed-point check assigns the exceptional value $x=-R$ to $\QR_R$. The
+non-residue quotient identity alone cannot distinguish it, since $y=0$ satisfies
+$y^2=c\cdot(x+R)=0$. Because $q_0$ is a product of linear factors,
+$q_0(-R)\neq0$ proves that $-R$ is absent from the non-residue output. Together
+with $p_0(X)\cdot p_1(X)=q_0(X)\cdot q_1(X)$, this forces it into $q_1$
+whenever it occurs.
 
-#### Incremental QR Tree {#iqt}
+The [shared-evidence construction](#shared-headers) later splits these checks
+across fixed PCD steps to respect Ragu's polynomial-oracle budget.
 
-Finally, we use these decompositions to build an incremental binary partition
-tree. Each leaf holds a set of tachygrams represented by a
-[tachygram accumulator](#acc), and an independent QR filter determines the
-branch at each depth. The tree grows only where needed: an oversized leaf is
-*decomposed on demand* under the next filter. Once that decomposition is
-certified, its parent accumulator, including the initial root, is pruned; only
-the current leaves remain materialized.
+<a id="iqt"></a>
+#### QR-predicated Partition Network {#pn}
 
-Both inclusion of note commitments and exclusion of past nullifiers can then be
-tested against their corresponding leaf bucket.
-
-**Base case.** Let the maximum leaf size be $B=8{,}096$. The tree starts with
-one empty root leaf:
+We now build a **partition network predicated on QR filters**. The network takes
+$n=2^k$ bounded input buckets and passes them through $k$ layers. Layer $j$ uses
+an independent predicate $\phi_j(x)\rightarrow\{0,1\}$. The network outputs $n$
+regrouped buckets satisfying
 
 $$
-q_\root(X)=1.
+T_i = \left\{x\in\bigcup_j S_j:
+(\phi_0(x),\ldots,\phi_{k-1}(x))=\mathsf{bits}_k(i)\right\}.
 $$
 
-The first $B$ tachygrams remain unpartitioned and are appended directly to the
-root. To append a bounded batch $T=\{\tg_i\}$, update
+For example, if $k=3$, then $T_5=T_{(101)}$ contains exactly the input elements
+with predicate profile
+$\phi_0(x)=1\land\phi_1(x)=0\land\phi_2(x)=1$.
 
-$$
-q_\root'(X) = q_\root(X) \cdot \prod_{\tg_i\in T}(X-\tg_i).
-$$
+<p align="center">
+  <a href="./assets/pred_network.svg">
+    <img src="./assets/pred_network.svg" alt="Predicate-based Network Scheme" />
+  </a>
+</p>
 
-Once $\mathsf{Com}(q_\root')$ is fixed, the update is checked at a random point.
-Bounding each append batch ensures that the first overflowing accumulator is
-only a bounded amount larger than $B$.
+> The partition network enables sublinear membership and non-membership tests.
+> Before partitioning, a query must test the input buckets one by one. After
+> partitioning, it tests only the output bucket for the queried value's profile.
+>
+> A suitable predicate family also distributes elements almost uniformly across
+> profiles. Independent QR filters provide this property over $\F_p$.
 
-**Tree growth.** When an append overflows the root, the OSS applies the first
-filter $R_0$ and partitions its tachygrams by their first profile bit:
+Let the root-bucket target be $B=8{,}000$, slightly below the maximum supported
+bucket size of $8{,}096$. Choose enough buckets that the probability of any
+intermediate or final bucket exceeding that maximum is negligible. Whether the
+$96$-element margin achieves the required tail bound remains a parameter-selection
+question. Pad the root bucket count with empty buckets $q(X)=1$ at the epoch's
+ending anchor to obtain $n=2^k$, then derive $k$ independent QR filters
+$\{R_j\}_{j\in[k]}$. The network proceeds as follows:
 
-$$
-\begin{aligned}
-q_0(X) &= \prod_{\tg_i\in\NQR_{R_0}}(X-\tg_i),\\
-q_1(X) &= \prod_{\tg_i\in\QR_{R_0}}(X-\tg_i).
-\end{aligned}
-$$
+1. **Prepare root buckets.** Scan the epoch's [stamps](#tx) in order and append
+   each stamp's tachygrams to the current unfiltered bucket. Close a bucket
+   before a bounded stamp would take it past the target $B$. The append relation
+   is
+   $$
+   q_\root'(X) = q_\root(X) \cdot \prod_{\tg_i\in \mathsf{stamp}}(X-\tg_i)
+   $$
+   Because the root has no filter, this update uses only the old and new bucket
+   polynomials. Each root proof certifies exactly the tachygrams in one disjoint,
+   contiguous segment of the epoch's [anchor chain](#anchor).
+2. **Apply the first filter.** Partition each consecutive pair of root buckets
+   under $R_0$. Each resulting pair covers the union of its input ranges: its
+   left bucket has profile `0` and contains the $\NQR_{R_0}$ elements, while its
+   right bucket has profile `1` and contains the $\QR_{R_0}$ elements.
+3. **Apply the remaining filters.** At layer $j$, pair consecutive buckets that
+   have the same $j$-bit profile and partition them under $R_j$. Append `0` or
+   `1` to the profile of each output. All pairs at one layer are independent and
+   can be proved in parallel.
 
-The [QR decomposition test](#qr-decomp) proves the purity of both buckets and
-the complete decomposition $q_\root(X)=q_0(X)q_1(X)$. Once that proof is folded
-into the construction, the root can be discarded.
+After layer $k-1$, the network has $n=2^k$ leaf buckets. Every leaf covers the
+full epoch and contains exactly the tachygrams with one $k$-bit QR profile. If
+$n=1$, no partition is needed: the sole unfiltered root is also the sole leaf.
 
-After a split, each child inherits its parent's covered-stream endpoint and can
-be extended independently on demand. Extending one terminal leaf processes the
-next contiguous source segment and appends exactly the values whose profiles
-match that leaf; non-matching values still have to be processed so the leaf's
-new endpoint covers the whole segment. The append relation must constrain every
-new value's profile, since checking only the accumulator product would allow a
-dishonest builder to omit or misfile a matching value. Other leaves need not be
-advanced until they are requested.
-
-When one leaf exceeds $B$, only that leaf is decomposed under the next
-independent filter. For example, if $q_1$ overflows while $q_0$ does not,
-splitting it under $R_1$ yields $q_{10}$ and $q_{11}$:
+The same network can process a stream incrementally when its filters are already
+known. We use this form for anchor-chain segments in the active epoch: root
+buckets are partitioned as they become available, and completed groups combine
+at successively higher layers.
 
 <p align="center">
   <a href="./assets/qr_tree.svg">
@@ -1085,24 +1110,43 @@ splitting it under $R_1$ yields $q_{10}$ and $q_{11}$:
 </p>
 
 <a id="qr-filters">**QR Filter Sampling.**</a>
-To make the filters unpredictable while the epoch's tachygrams are chosen, derive
-them from chain entropy fixed at the end of the epoch, for example by iteratively
-hashing $\sntl_{e+1}$. Construction therefore begins after the epoch closes and
-replays its authenticated history as a bounded stream. Here *incremental* refers
-to that streaming construction, not to maintaining the final tree online during
-the epoch. This argument assumes the chosen chain entropy is sufficiently hard
-to bias.
+For tachygrams, the filters must remain unpredictable while the epoch's values
+are chosen. Derive the first filter from chain entropy fixed at the end of the
+epoch, then derive each later filter with Poseidon:
 
-**Queries and cost.** We assume the service supplies a leaf for the intended
-ending anchor. Its proof attests that it contains exactly the covered values with
-profile $\v{b}$. A consumer computes the full profile, checks equality with
-$\v{b}$, and tests $q_{\v{b}}(x)=0$ for membership or
-$q_{\v{b}}(x)\neq0$ for non-membership.
+$$
+R_0=H(\sntl_{e+1}),\qquad R_{j+1}=H(R_j).
+$$
 
-For random-looking values, leaf depth is $O(\log(N/B))$ with high probability,
-not as a worst-case guarantee. A query constrains that many profile bits and
-makes one polynomial query against an accumulator of degree at most $B$. The
-one-time tree-construction cost is amortized across all subsequent queries.
+Root buckets may be built while the epoch is active because they apply no
+filter, but their partition network is built only after $\sntl_{e+1}$ fixes
+$R_0$. This assumes the chain entropy is sufficiently hard to bias. Anchor-side
+filters may instead derive from the starting sentinel, which is known before the
+active epoch begins.
+
+**Fixed-size public inputs.** An output bucket at layer $j$ exposes its range,
+layer $j$, profile $\v{b}=(b_0,\ldots,b_j)$ interpreted as the binary integer
+$b$ and represented in the circuit as a field element, the filter $R_j$ just
+applied, and its accumulator commitment. To partition two such buckets at the
+next layer, derive $R_{j+1}=H(R_j)$. The outputs satisfy
+
+$$
+j'=j+1,\qquad b'=2b+b_{j+1},
+$$
+
+where $b_{j+1}=0$ for the $\NQR_{R_{j+1}}$ output and $b_{j+1}=1$ for the
+$\QR_{R_{j+1}}$ output. The base layer similarly derives $R_0$ from the ending
+sentinel and emits $b=b_0$. Thus every partition relation has a fixed number of
+public inputs, independent of tree depth.
+
+**Queries and cost.** A service publishes all full-epoch leaf buckets and their
+PCD proofs. To query $x$, a consumer computes $b_0$ under $R_0$, then computes one
+additional profile bit per recursive step while deriving $R_{j+1}=H(R_j)$ and
+accumulating $b'=2b+b_{j+1}$. It selects the leaf with the resulting
+$(j,b,R_j)$ and tests $q_b(x)=0$ for membership or $q_b(x)\neq0$ for
+non-membership. The query makes one polynomial query against an accumulator
+within the PCS degree limit. Building the network processes every tachygram once
+per layer; that one-time cost is amortized across later queries.
 
 ### Transaction Life Cycle {#txflow}
 
