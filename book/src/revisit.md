@@ -988,7 +988,7 @@ $$
 \right\}
 $$
 
-This relation rearranges $S_0\cup S_1$ without adding or removing elements. The
+This relation preserves $S_0\cup S_1$ without adding or removing elements. The
 left output contains exactly its $\NQR_R$ elements, and the right output contains
 exactly its $\QR_R$ elements.
 
@@ -1525,103 +1525,186 @@ syncing cost to *logarithmic* in the length of the anchor chain segment and/or
 the total number of tachygrams in that segment, with high probability under the
 QR-filter model.
 
-For anchor ancestry, each leaf is represented by
+Both shared structures instantiate the same [partition network](#pn). We first
+describe their common construction, then the differences between them.
+
+A root header has the form
 
 $$
-\mathtt{AnchorChain}\{\anchor_L, \anchor_R, \{R_j\}, \v{b}, \mathsf{Com}(q^\anchor_{\v{b}}(X)) \}
+\mathtt{Root}\{\anchor_L,\anchor_R,n,\mathsf{Com}(p(X))\}.
 $$
 
-Its recursive proof certifies both the anchor-chain transitions and that
-$q^\anchor_{\v{b}}$ contains exactly the anchors with profile $\v{b}$ in
-$[\anchor_L,\anchor_R]$. $\mathsf{AnchorSeed}$ initializes the unsplit leaf at
-$\anchor_L$. $\mathsf{AnchorAppend}$ extends one terminal leaf through a
-contiguous stream of anchor updates: it verifies every hash-chain transition and
-appends exactly the resulting anchors matching that leaf's profile. For stamp
-transitions, it binds the exact accumulator absorbed by the anchor update. Stamp
-validity comes from the canonical history ending at the externally checked target
-anchor; it need not be recursively reproved while constructing this evidence.
-
-When a leaf overflows, $\mathsf{AnchorLeftDecomp}$ and
-$\mathsf{AnchorRightDecomp}$ derive its two children using the [QR decomposition
-test](#qr-decomp). Both children inherit the same $(\anchor_L,\anchor_R)$ and can
-then be extended independently on demand. A consumer computes the candidate
-anchor's full profile, checks that it equals $\v{b}$, and proves
-$q^\anchor_{\v{b}}(\anchor)=0$.
-
-Anchor-chain evidence is built online while its epoch is active and is not
-rebuilt after the epoch closes. Its offsets are therefore always fixed from the
-epoch's *starting sentinel*:
+It covers the source-indexed transition range $[\anchor_L,\anchor_R)$. Adjacent
+roots therefore satisfy $A.\anchor_R=B.\anchor_L$ without sharing a transition.
+$\mathsf{RootSeed}$ emits an empty root with $n=0$ and $\mathsf{Com}(1)$, while
+$\mathsf{RootAppend}$ appends a bounded batch $T$:
 
 $$
-R_j := H^{j}(\sntl_{e}) = \underbrace{H(\ldots H}_{j \text{ times}}(\sntl_{e})\ldots)
-\quad\text{where }
-e = \mathsf{Epoch}(\anchor_L)
+p'(X)=p(X)\cdot\prod_{x\in T}(X-x),\qquad n'=n+|T|\leq B.
 $$
 
-This relies on an individual user having no significant bias over $\sntl_e$ and
-only limited ability to grind subsequent anchor values against the already fixed
-offsets. That assumption affects bucket balance and proving cost, not the
-soundness of the certified partition.
+The old and new commitments are fixed before the random-point check. A root
+closes before the next batch would exceed $B$, and the next root starts at its
+right endpoint. Trailing empty roots $[\anchor_R,\anchor_R)$ pad the root count
+to a power of two of at least two. Their endpoint must be the advertised final
+endpoint; final range checks and pairwise contiguity prevent padding from hiding
+a missing segment. The concrete padding steps are $\mathsf{AnchorRootPad}$ and
+$\mathsf{TachygramsRootPad}$.
+
+Pairing either two roots or two extracted buckets produces
+
+$$
+\mathtt{Partition}_s\{\sigma,\anchor_L,\anchor_R,j,b,R_j,
+  \mathsf{Com}(q_0),\mathsf{Com}(q_1)\},
+$$
+
+where $\sigma$ is the filter seed, $b$ is the common parent profile, and
+$s\in\{\mathsf{permuted},\mathsf{left},\mathsf{checked}\}$ records the completed
+checks. Anchor and tachygram constructions use distinct concrete header types.
+The inputs must be either two roots or two extracted buckets of the same type,
+and their ranges must be contiguous. For extracted inputs at layer $j-1$,
+
+$$
+A.j=B.j=j-1,\qquad A.b=B.b=b,\qquad
+A.R=B.R=R_{j-1},\qquad R_j=H(R_{j-1}).
+$$
+
+At the base layer, set $j=0$, derive $R_0=H(\sigma)$, and encode the empty parent
+profile as $b=0$. Every later pairing also requires equal $\sigma$ on both
+inputs. The final range check binds $\sigma$ to the appropriate sentinel.
+
+For input polynomials $p_0,p_1$, the partition takes five steps:
+
+1. **Pair partition.** Fix $q_0,q_1$ before sampling $r$ and enforce
+   $$
+   p_0(r)\cdot p_1(r)\iseq q_0(r)\cdot q_1(r).
+   $$
+   This queries four distinct polynomials and emits state $\mathsf{permuted}$.
+2. **Check left.** Require state $\mathsf{permuted}$, fix
+   $g^\NQR,h^\NQR$, and enforce
+   $$
+   g^\NQR(r)^2-c\cdot(r+R_j)
+   \iseq q_0(r)\cdot h^\NQR(r),
+   \qquad q_0(-R_j)\neq0.
+   $$
+   This queries three distinct polynomials and emits state $\mathsf{left}$.
+3. **Check right.** Require state $\mathsf{left}$, fix $g^\QR,h^\QR$, and enforce
+   $$
+   g^\QR(r)^2-(r+R_j)\iseq q_1(r)\cdot h^\QR(r).
+   $$
+   This queries three distinct polynomials and emits state $\mathsf{checked}$.
+4. **Extract left.** Require state $\mathsf{checked}$ and emit the bucket with
+   profile $2b$ and $\mathsf{Com}(q_0)$.
+5. **Extract right.** Require state $\mathsf{checked}$ and emit the bucket with
+   profile $2b+1$ and $\mathsf{Com}(q_1)$.
+
+All unchanged fields and both output commitments are absorbed before each
+challenge and equality-constrained across the checking steps. Requiring both
+purity checks before extraction proves that either child is complete, rather
+than merely pure. All pairs within a layer are independent and may be proved in
+parallel. Every polynomial degree must remain within the PCS limit.
+
+A query is checked in one step. Given $x$ and an extracted bucket, the circuit
+derives $R_0,\ldots,R_j$, checks every profile bit, encodes them as $b$, and
+matches $(b,R_j)$ against the bucket. Every non-residue bit also requires
+$x+R_i\neq0$. The same step checks the required final range and opens $q_b$ at
+$x$. Its fixed circuit supports a maximum layer and disables profile checks
+above $j$.
+
+**Anchor chain.** Anchor evidence uses
+
+$$
+\begin{aligned}
+\mathtt{AnchorRoot}&\{\anchor_L,\anchor_R,n,
+  \mathsf{Com}(p^\anchor(X))\},\\
+\mathtt{AnchorChain}&\{\sigma,\anchor_L,\anchor_R,j,b,R_j,
+  \mathsf{Com}(q^\anchor_b(X))\}.
+\end{aligned}
+$$
+
+Each root polynomial contains the source anchor of every transition in its
+range. $\mathsf{AnchorRootAppend}$ verifies those transitions and, for a stamp
+transition, binds the exact tachygram accumulator absorbed by the anchor update.
+Stamp validity comes from canonical history ending at the externally checked
+target anchor; it need not be recursively reproved here.
+
+Anchor filters are known while the epoch is active:
+
+$$
+\sigma=\sntl_e,\qquad R_0=H(\sntl_e),\qquad R_{j+1}=H(R_j).
+$$
+
+Thus roots can be partitioned as they become available. A final
+$\mathtt{AnchorChain}$ must have $\anchor_L=\sigma=\sntl_e$ and the advertised
+target as $\anchor_R$. This relies on an individual user having no significant
+bias over $\sntl_e$ and only limited ability to grind later anchors against the
+fixed filters. That assumption affects bucket balance, not soundness.
 
 ```mermaid
 flowchart TB
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  anc["$$\mathtt{AnchorChain}\\ \{\anchor_L,\anchor_L,\emptyset,[],\mathsf{Com}(X-\anchor_L)\}$$"]:::s
-  ancprime["$$\mathtt{AnchorChain}\\ \{\cdot,\anchor_R',\cdot,\cdot,\mathsf{Com}(q'^\anchor_{\v{b}})\}$$"]:::s
-  ancl["$$\mathtt{AnchorChain}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|0,\mathsf{Com}(q'^\anchor_{\v{b}\|0})\}$$"]:::s
-  ancr["$$\mathtt{AnchorChain}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|1,\mathsf{Com}(q'^\anchor_{\v{b}\|1})\}$$"]:::s
+  root["$$\mathtt{AnchorRoot}\\ \{\anchor_L,\anchor_L,0,\mathsf{Com}(1)\}$$"]:::s
+  rootprime["$$\mathtt{AnchorRoot}\\ \{\anchor_L,\anchor_R,n,\mathsf{Com}(p^\anchor)\}$$"]:::s
+  a["$$A:\ \mathtt{AnchorRoot}/\mathtt{AnchorChain}$$"]:::s
+  b["$$B:\ \mathtt{AnchorRoot}/\mathtt{AnchorChain}$$"]:::s
+  pp["$$\mathtt{AnchorPartition}_{\mathsf{permuted}}$$"]:::s
+  pl["$$\mathtt{AnchorPartition}_{\mathsf{left}}$$"]:::s
+  pc["$$\mathtt{AnchorPartition}_{\mathsf{checked}}$$"]:::s
+  left["$$\mathtt{AnchorChain}\\ \{\sigma,\anchor_L,\anchor_R,j,2b,R_j,\mathsf{Com}(q_0)\}$$"]:::s
+  right["$$\mathtt{AnchorChain}\\ \{\sigma,\anchor_L,\anchor_R,j,2b+1,R_j,\mathsf{Com}(q_1)\}$$"]:::s
 
-  AnchorSeed(["$$\mathsf{AnchorSeed}$$"]):::o --> anc
-  anc --> AnchorAppend(["$$\mathsf{AnchorAppend}$$"]):::o --> ancprime
-  anc --> AnchorLeftDecomp(["$$\mathsf{AnchorLeftDecomp}$$"]):::o --> ancl
-  anc --> AnchorRightDecomp(["$$\mathsf{AnchorRightDecomp}$$"]):::o --> ancr
+  AnchorRootSeed(["$$\mathsf{AnchorRootSeed}$$"]):::o --> root
+  root --> AnchorRootAppend(["$$\mathsf{AnchorRootAppend}$$"]):::o --> rootprime
+  a --> AnchorPartition(["$$\mathsf{AnchorPartition}$$"]):::o
+  b --> AnchorPartition --> pp --> AnchorLeftCheck(["$$\mathsf{AnchorLeftCheck}$$"]):::o --> pl
+  pl --> AnchorRightCheck(["$$\mathsf{AnchorRightCheck}$$"]):::o --> pc
+  pc --> AnchorLeftExtract(["$$\mathsf{AnchorLeftExtract}$$"]):::o --> left
+  pc --> AnchorRightExtract(["$$\mathsf{AnchorRightExtract}$$"]):::o --> right
 ```
 
-The second shared structure contains all tachygrams from one complete past
-epoch.[^full-epoch] Its leaves are
+**Tachygrams.** Tachygram evidence uses the same headers and five partition
+steps, renamed with the `Tachygrams` prefix. Its concrete query bucket is
 
 $$
-\mathtt{Tachygrams}\{\sntl_i, \sntl_{i+1}, \{R_j\}_j, \v{b}, \mathsf{Com}(q^\tg_{\v{b}})\}
+\mathtt{Tachygrams}\{\sigma,\anchor_L,\anchor_R,j,b,R_j,
+  \mathsf{Com}(q^\tg_b(X))\}.
 $$
 
-$\mathsf{TachygramsSeed}$ starts an unsplit empty leaf at $\sntl_i$.
-$\mathsf{TachygramsAppend}$ extends one terminal leaf through a contiguous
-anchor-chain segment, verifies each transition, and appends exactly the
-profile-matching tachygrams from every stamp accumulator absorbed in that
-segment. Non-matching tachygrams contribute no factor but are still processed,
-so the leaf's right endpoint authenticates the whole segment. Decomposition
-again emits two children with the same endpoints, each independently extendable.
-Final evidence must reach $\sntl_{i+1}$; sentinel transitions contribute no
-factor. Consumers constrain the queried value's profile before using $q^\tg_{\v{b}}$
-for membership or non-membership.
+A root contains every tachygram published by the stamp transitions in its range.
+For a stamp batch $T$, let $a_T(X)$ be the accumulator absorbed by its anchor
+transition. $\mathsf{TachygramsRootAppend}$ fixes $p,p'$, and $a_T$ before
+sampling $r$ and enforces
+
+$$
+p'(r)\iseq p(r)\cdot a_T(r),\qquad
+a_T(r)\iseq\prod_{x\in T}(r-x),\qquad
+n'=n+|T|\leq B.
+$$
+
+This binds the explicit tachygrams to both the authenticated transition and the
+new root using three distinct polynomial oracles. Sentinel transitions add no
+factor.
+
+Tachygram roots may be built while epoch $i$ is active, but partitioning waits
+until its ending sentinel fixes
+
+$$
+\sigma=\sntl_{i+1},\qquad R_0=H(\sntl_{i+1}),\qquad
+R_{j+1}=H(R_j).
+$$
+
+Final evidence must have $(\anchor_L,\anchor_R)=(\sntl_i,\sntl_{i+1})$ and is
+available only for complete past epochs.[^full-epoch]
 
 [^full-epoch]: An earlier draft considered partial-epoch tachygram accumulators.
     Restricting this evidence to complete sentinel-bounded epochs avoids separate
     header and step variants for ordinary and sentinel endpoints.
 
-```mermaid
-flowchart TB
-  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
-  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
-
-  tg["$$\mathtt{Tachygrams}\\ \{\sntl_i,\sntl_i,\emptyset,[],\mathsf{Com}(1)\}$$"]:::s
-  tgprime["$$\mathtt{Tachygrams}\\ \{\cdot,\anchor_R',\cdot,\cdot,\mathsf{Com}(q'^\tg_{\v{b}})\}$$"]:::s
-  tgl["$$\mathtt{Tachygrams}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|0,\mathsf{Com}(q'^\tg_{\v{b}\|0})\}$$"]:::s
-  tgr["$$\mathtt{Tachygrams}\\ \{\cdot,\cdot,\{R_j\}\cup\{R'\},\v{b}\|1,\mathsf{Com}(q'^\tg_{\v{b}\|1})\}$$"]:::s
-
-  TachygramsSeed(["$$\mathsf{TachygramsSeed}$$"]):::o --> tg
-  tg --> TachygramsAppend(["$$\mathsf{TachygramsAppend}$$"]):::o --> tgprime
-  tg --> TachygramsLeftDecomp(["$$\mathsf{TachygramsLeftDecomp}$$"]):::o --> tgl
-  tg --> TachygramsRightDecomp(["$$\mathsf{TachygramsRightDecomp}$$"]):::o --> tgr
-```
-
-The diagram below visualizes the reusable certified headers and their respective
-anchor-chain ranges. $\mathtt{Tachygrams}$ headers are generated only for past
-epochs; $\mathtt{AnchorChain}$ evidence may also cover the active epoch up to the
-chain tip.
-
+The diagram below summarizes the reusable final headers and their covered
+anchor-chain ranges. $\mathtt{Tachygrams}$ is available only for complete past
+epochs, while $\mathtt{AnchorChain}$ may end at a tip in the active epoch.
 
 <p align="center">
   <a href="./assets/shared_headers.svg">
@@ -1647,7 +1730,7 @@ flowchart TB
   outputstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   stamp["$$\mathtt{Stamp}\\ \{\actacc',\tgacc',\anchor\}$$"]:::u
   stampprime["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor'\}$$"]:::u
-  anc["$$\mathtt{AnchorChain}\\ \{\anchor_L,\anchor_R,\{R_j\},\v{b},\mathsf{Com}(q^\anchor_{\v{b}})\}$$"]:::s
+  anc["$$\mathtt{AnchorChain}\\ \{\sigma,\anchor_L,\anchor_R,j,b,R_j,\mathsf{Com}(q^\anchor_b)\}$$"]:::s
 
   SpendableInit(["$$\mathsf{SpendableInit}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
@@ -1682,10 +1765,10 @@ not exist before that stamp.
 For the $\mathsf{StampLift}$ step, it's important that circuit only allows an
 anchor update within the same spending epoch, keeping $e=e_\incl$. Sufficient
 lift is needed to obfuscate the inclusion block for [spend unlinkability](#nf-sec).
-The step computes the old anchor's constrained QR profile, checks that it equals
-the input $\mathtt{AnchorChain}$ leaf's profile, proves
-$q^\anchor_{\v{b}}(\anchor)=0$, and requires the header's right endpoint to equal the new
-stamp anchor. It also enforces
+The query step computes the old anchor's encoded QR profile through $R_j$,
+checks it against the input $\mathtt{AnchorChain}$ fields $(j,b,R_j)$, and proves
+$q^\anchor_b(\anchor)=0$. $\mathsf{StampLift}$ requires the header's right
+endpoint to equal the new stamp anchor. It also enforces
 $\mathsf{Epoch}(\anchor_L)=\mathsf{Epoch}(\anchor_R)=
 \mathsf{Epoch}(\anchor)=\mathsf{Epoch}(\anchor')$ and requires the covered range
 to contain no sentinel transition. Thus the lift proves same-epoch ancestry
@@ -1723,21 +1806,19 @@ old inclusion anchor through an ad hoc partial range.
 $\mathsf{SpendableReinit}$ first bridges the two inclusion-epoch headers. It
 requires equality of their left sentinel endpoints and equality of their right
 sentinel endpoints, so $\mathtt{AnchorChain}$ and $\mathtt{Tachygrams}$ cover the
-same epoch $e_\incl$. Their QR parameters and profiles remain independent because
-they answer different queries. The step reopens one note and enforces
+same epoch $e_\incl$. Their $(j,b,R_j)$ fields remain independent because they
+answer different queries. The step reopens one note and enforces
 $\pk=\mathsf{Com}(\ak,\nk)$,
 $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$, and
-$k=\mathsf{KDF}(\nk,\psi)$. It then derives $\nf_{e_\incl}$, computes and
-constrains its [QR profile](#iqt), checks that it equals the supplied
-$\mathtt{Tachygrams}$ leaf's profile, and checks
-$q^\tg_{\v{b}}(\nf_{e_\incl})\neq 0$
-against the corresponding certified tachygram leaf. Separately, it proves $\cm$
+$k=\mathsf{KDF}(\nk,\psi)$. It then derives $\nf_{e_\incl}$ and performs a query
+that matches its encoded profile to the supplied $\mathtt{Tachygrams}$ fields
+and proves $q^\tg_b(\nf_{e_\incl})\neq0$. Separately, it proves $\cm$
 belongs to the witnessed creation-stamp accumulator and uses the
 $\mathtt{AnchorChain}$ evidence to authenticate that stamp's resulting anchor:
-it recomputes $\anchor_\mathsf{create}$ from the same accumulator commitment,
-computes the anchor's profile, checks equality with the supplied
-$\mathtt{AnchorChain}$ leaf's own profile, and proves
-$q^\anchor_{\v{b}}(\anchor_\mathsf{create})=0$. The
+it recomputes $\anchor_\mathsf{create}$ from the same accumulator commitment and
+performs a query that matches the anchor's encoded profile to the supplied
+$\mathtt{AnchorChain}$ fields and proves
+$q^\anchor_b(\anchor_\mathsf{create})=0$. The
 membership check proves creation in epoch $e_\incl$; the nullifier
 non-membership check proves the note remained unspent through the rest of that
 epoch. The resulting $\mathtt{Spendable}$ is therefore bound to $\cm$ and
@@ -1754,12 +1835,12 @@ flowchart TB
   nf["$$\mathtt{Nullifiers}\\ \{\cm, k, r_0, n, \mathsf{Com}(g_n(X))\}$$"]:::u
   unspent["$$\mathtt{Unspent}\\ \{s_0, m=0, \sntl_{s_0}, \sntl_{s_0+m}, \mathsf{Com}(1)\}$$"]:::o
   unspentprime["$$\mathtt{Unspent}\\ \{s_0,m,\sntl_{s_0},\sntl_{s_0+m},\mathsf{Com}(g_m)\}$$"]:::o
-  tg["$$\mathtt{Tachygrams}\\ \{\sntl_i,\sntl_{i+1},\{R_j\},\v{b},\mathsf{Com}(q^\tg_{\v{b}})\}$$"]:::s
+  tg["$$\mathtt{Tachygrams}\\ \{\sntl_{i+1},\sntl_i,\sntl_{i+1},j,b,R_j,\mathsf{Com}(q^\tg_b)\}$$"]:::s
   spendable["$$\mathtt{Spendable}\\ \{\cm, e_\incl + 1, \sntl_{e_\incl+1}\}$$"]:::u
   spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_0+m,\sntl_{s_0+m}\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
-  ancincl["$$\mathtt{AnchorChain}\\ \{\sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\anchor_{\v{b}}(X)) \}$$"]:::s
-  tgincl["$$\mathtt{Tachygrams}\\ \{ \sntl_{e_\incl}, \sntl_{e_\incl+1}, \cdot, \v{b}, \mathsf{Com}(q^\tg_{\v{b}}(X))\}$$"]:::s
+  ancincl["$$\mathtt{AnchorChain}\\ \{\sntl_{e_\incl},\sntl_{e_\incl},\sntl_{e_\incl+1},j,b,R_j,\mathsf{Com}(q^\anchor_b)\}$$"]:::s
+  tgincl["$$\mathtt{Tachygrams}\\ \{\sntl_{e_\incl+1},\sntl_{e_\incl},\sntl_{e_\incl+1},j,b,R_j,\mathsf{Com}(q^\tg_b)\}$$"]:::s
 
   UnspentSeed(["$$\mathsf{UnspentSeed}$$"]):::o
   UnspentLift(["$$\mathsf{UnspentLift}$$"]):::o
@@ -1816,8 +1897,8 @@ $\mathsf{UnspentLift}$:
 - requires its current right endpoint to equal the input
   $\mathtt{Tachygrams}$ header's left sentinel;
 - requires that header to cover the next epoch $i=s_0+m$;
-- computes and constrains $\nf_i$'s QR profile, checks that it equals the supplied
-  leaf's profile, and proves $q^\tg_{\v{b}}(\nf_i)\neq0$; and
+- matches $\nf_i$ to the supplied bucket's $(j,b,R_j)$ and proves
+  $q^\tg_b(\nf_i)\neq0$ in the same query step; and
 - appends the same [indexed factor $F_{i,\nf_i}(X)$](#nf-flow), fixing the old
   and new commitments before the oracle challenge and enforcing
   $$
@@ -1883,11 +1964,12 @@ gaps or overlap. It then emits
 
 $$
 \mathtt{Unspent}\{s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R},
-  \mathsf{Com}(g_Lg_R)\},
+  \mathsf{Com}(g_L\cdot g_R)\},
 $$
 
-setting $g_M=g_Lg_R$ and proving $g_M(r)=g_L(r)g_R(r)$ at a random point after
-all three commitments are fixed. Although polynomial
+setting $g_M=g_L\cdot g_R$ and proving
+$g_M(r)=g_L(r)\cdot g_R(r)$ at a random point after all three commitments are
+fixed. Although polynomial
 multiplication is commutative, the endpoint checks make the merged historical
 range ordered. Repeated merges can combine any number of adjacent OSS results
 before the wallet binds them to its note.
@@ -1900,7 +1982,7 @@ flowchart TB
 
   left["$$L:\ \mathtt{Unspent}\\ \{s_L,m_L,\sntl_{s_L},\sntl_{s_L+m_L},\mathsf{Com}(g_L)\}$$"]:::o
   right["$$R:\ \mathtt{Unspent}\\ \{s_R,m_R,\sntl_{s_R},\sntl_{s_R+m_R},\mathsf{Com}(g_R)\}$$"]:::o
-  merged["$$\mathtt{Unspent}\\ \{s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R},\mathsf{Com}(g_Lg_R)\}$$"]:::o
+  merged["$$\mathtt{Unspent}\\ \{s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R},\mathsf{Com}(g_L\cdot g_R)\}$$"]:::o
   nf["$$\mathtt{Nullifiers}\\ \{\cm,k,r_0,n,\mathsf{Com}(g_n)\}$$"]:::u
   verified["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,m_L+m_R,\sntl_{s_L},\sntl_{s_R+m_R}\}$$"]:::u
 
