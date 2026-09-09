@@ -8,6 +8,7 @@ extern crate alloc;
 pub mod delegation;
 pub mod output;
 pub mod pool;
+pub mod qr;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
@@ -40,6 +41,14 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(summary::SummaryAdvance)?
         .register(pool::SummaryUnspentInit)?
         .register(spendable::SummarySpendableInit)?
+        .register(qr::QrSummaryIntakeInit)?
+        .register(qr::QrIntakeMerge)?
+        .register(qr::QrIntakeSplit)?
+        .register(qr::QrSideDescend)?
+        .register(qr::QrUnspentInit)?
+        .register(qr::QrBucketSeal)?
+        .register(qr::QrStampIntakeSeed)?
+        .register(spendable::QrSpendableInit)?
         .finalize()
 }
 

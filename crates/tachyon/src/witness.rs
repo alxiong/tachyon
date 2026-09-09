@@ -6,14 +6,17 @@
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
 
+use pasta_curves::Fp;
 use ragu::{Header, Step};
 
 use crate::{
+    collections,
     keys::ProofAuthorizingKey,
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
+        Tachygram, TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -21,8 +24,12 @@ use crate::{
             AnchorSeed, EndEpochUnspentSeed, SummaryUnspentInit, UnspentBind, UnspentFuse,
             UnspentSeed,
         },
+        qr::{
+            QrBucketSeal, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrStampIntakeSeed,
+            QrSummaryIntakeInit, QrUnspentInit,
+        },
         spend::SpendBind,
-        spendable::{SpendableInit, SummarySpendableInit},
+        spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
         stamp::MergeStamp,
         summary::{SummaryAdvance, SummarySeed},
     },
@@ -334,6 +341,160 @@ pub fn summary_spendable_init(
         NfSeqPoly::new(deriv_start, window),
         complement_seq,
         summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Prepare the witness for [`QrSpendableInit`]: `(contents)`.
+#[must_use]
+pub fn qr_spendable_init(
+    (_unspent, _bucket): (StepLeft<QrSpendableInit>, StepRight<QrSpendableInit>),
+    bucket_members: &[Tachygram],
+) -> StepWitness<'static, QrSpendableInit> {
+    (bucket_members.iter().copied().collect(),)
+}
+
+/// Prepare the witness for [`QrSummaryIntakeInit`]: `(discriminant)`.
+#[must_use]
+pub const fn qr_summary_intake_init(
+    (_left, _right): (
+        StepLeft<QrSummaryIntakeInit>,
+        StepRight<QrSummaryIntakeInit>,
+    ),
+    discriminant: QrDiscriminant,
+) -> StepWitness<'static, QrSummaryIntakeInit> {
+    (discriminant,)
+}
+
+/// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
+/// discriminant, stamp_commit)`.
+#[must_use]
+pub fn qr_stamp_intake_seed(
+    (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
+    anchor_prev: Anchor,
+    epoch: EpochIndex,
+    discriminant: QrDiscriminant,
+    tgs: &[Tachygram],
+) -> StepWitness<'static, QrStampIntakeSeed> {
+    (
+        anchor_prev,
+        epoch,
+        discriminant,
+        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+    )
+}
+
+/// Prepare the witness for [`QrIntakeMerge`]: `(left_contents,
+/// right_contents, merged)`.
+#[must_use]
+pub fn qr_intake_merge(
+    (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
+    left_tgs: &[Tachygram],
+    right_tgs: &[Tachygram],
+) -> StepWitness<'static, QrIntakeMerge> {
+    (
+        left_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        right_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        left_tgs
+            .iter()
+            .chain(right_tgs)
+            .copied()
+            .collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Prepare the witness for [`QrIntakeSplit`]: `(contents, residue,
+/// non_residue)`.
+#[must_use]
+pub fn qr_intake_split(
+    (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
+    members: &[Tachygram],
+) -> StepWitness<'static, QrIntakeSplit> {
+    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = intake;
+    let (residue, non_residue) = collections::qr::split(
+        members.iter().copied().map(Fp::from),
+        discriminant.at(profile.depth),
+    );
+    (
+        members.iter().copied().collect::<TachygramSetPoly>(),
+        residue
+            .iter()
+            .map(|&(member, _root)| Tachygram::from(member))
+            .collect(),
+        non_residue
+            .iter()
+            .map(|&(member, _root)| Tachygram::from(member))
+            .collect(),
+    )
+}
+
+/// Prepare the witness for [`QrSideDescend`]: `(bit, sibling_contents,
+/// interpolant, quotient)`.
+///
+/// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
+/// is the residue side when set. The decomposition is the sibling's, at the
+/// sibling's class multiplier.
+#[must_use]
+pub fn qr_side_descend(
+    (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
+    members: &[Tachygram],
+    side: bool,
+) -> StepWitness<'static, QrSideDescend> {
+    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _residue, _non_residue) = sides;
+    let (residue, non_residue) = collections::qr::split(
+        members.iter().copied().map(Fp::from),
+        discriminant.at(profile.depth),
+    );
+    let sibling = if side { non_residue } else { residue };
+    #[expect(clippy::expect_used, reason = "members of a split are distinct")]
+    let (interpolant, quotient) = collections::qr::decomposition(
+        &sibling,
+        collections::qr::class_multiplier(!side),
+        discriminant.at(profile.depth),
+    )
+    .expect("members of a split are distinct");
+    (
+        side,
+        sibling
+            .iter()
+            .map(|&(member, _root)| Tachygram::from(member))
+            .collect(),
+        interpolant.into(),
+        quotient.into(),
+    )
+}
+
+/// Prepare the witness for [`QrBucketSeal`]: `(prev_last)`.
+///
+/// `prev_last` is the terminal anchor of the preceding epoch, the zero anchor
+/// for epoch zero.
+#[must_use]
+pub const fn qr_bucket_seal(
+    (_left, _right): (StepLeft<QrBucketSeal>, StepRight<QrBucketSeal>),
+    prev_last: Anchor,
+) -> StepWitness<'static, QrBucketSeal> {
+    (prev_last,)
+}
+
+/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
+/// sequence, contents)`.
+///
+/// # Panics
+///
+/// Panics when the bucket's profile depth exceeds
+/// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH).
+#[must_use]
+pub fn qr_unspent_init(
+    (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
+    value: Tachygram,
+    bucket_members: &[Tachygram],
+) -> StepWitness<'static, QrUnspentInit> {
+    let (epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = bucket;
+    (
+        value,
+        QrClassRoot::along(Fp::from(value), discriminant),
+        profile.depth_mask(),
+        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
+        bucket_members.iter().copied().collect(),
     )
 }
 
