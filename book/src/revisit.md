@@ -299,8 +299,8 @@ opening and updatability (cf a
 [SoK on VC](https://www.di.ens.fr/~nitulesc/files/vc-sok.pdf)).
 However, existing solutions are all built on RSA or bilinear groups, neither is
 circuit-friendly. Luckily, in our specific use case, we don't strictly need a
-full-blown VC: our nullifier commitment is built over many PCD steps, each of
-which could enforce a correct update to the running commitment. In other words,
+full-blown VC: our nullifier commitment is built incrementally, with each update
+proven correct against the running commitment. In other words,
 the prover in a standard VC is given $[(i,\nf_i)]$ to produce a commitment to
 the verifier for subvector opening, but a cheating prover could deviate from
 the prescribed commit algorithm; whereas in our context, we can enforce honest
@@ -380,9 +380,9 @@ The commitments to $g_R$, $g_S$, and $q$ are fixed before the oracle challenge
 $r\sample\F$, after which the verifier checks $g_R(r)=g_S(r)\cdot q(r)$.
 
 Divisibility itself is commutative and therefore proves only indexed-multiset
-inclusion; it *does not prove order*. Looking ahead, PCD steps in our [proof
-tree](#proof-tree) that build $g_S$ separately forces $S$ to be a contiguous
-increasing epoch range by checking its counter and sentinel endpoints at every step.
+inclusion; it *does not prove order*. Order is enforced separately by requiring
+$S$ to be a contiguous increasing epoch range and checking its counter and
+sentinel endpoints as it is built.
 
 **Soundness sketch.** For Pasta scalar field $\F_p$, we know $p=1\pmod 3$, thus
 we can fix $c=2$ as a public non-cube. Then $Y^3-c$ is irreducible over $\F$,
@@ -649,22 +649,24 @@ scalar $\bsk$ behind the public key $\bvk$.
 </details>
 
 Before describing the stamp, we name a recurring object it relies on: the
-<a id="spendability"></a>**spendability proof**. It establishes two historical
-facts about a spent note: its commitment appeared in a stamp included in a
-finalized block (*inclusion*), and its epoch-specific nullifier remained absent
-afterward (*exclusion*). Since old tachygrams are pruned from the live tachygram
-set, these facts are proven against an authenticated history of tachygrams
-on-chain.
+<a id="spendability"></a>**spendability proof**. Once complete, it establishes
+two historical facts about a spent note: its commitment appeared in a stamp
+included in a finalized block (*inclusion*), and every nullifier required for
+complete earlier epochs was absent (*exclusion*). For a same-epoch note the
+exclusion range is empty. Historical claims remain relative to an authenticated
+chain position until the target anchor is checked by consensus. Since old
+tachygrams are pruned from the live tachygram set, these facts are proven against
+an authenticated history of tachygrams on-chain.
 
-Once the creation block is finalized, the wallet may initialize and cache the
-spendability proof as updatable PCD, making the note immediately spendable. A
-same-epoch spend can use this proof directly without exclusion evidence. For a
-later-epoch spend, the wallet advances the cached proof to a newer anchor by
-folding authenticated exclusion evidence into it.
+Once the creation block is finalized, the wallet may prepare evidence for an
+immediate same-epoch spend, where no past exclusion is required. If the note
+survives the epoch, authenticated full-epoch evidence establishes both creation
+membership and inclusion-epoch nullifier exclusion. Additional full-epoch
+evidence extends exclusion through later completed epochs.
 
 A **Tachyon Stamp** provides a PCD proof that every action in the bundle is
 valid and that the action and tachygram accumulators match those actions.
-Its PCD header is the fixed-size tuple $(\actacc,\tgacc,\anchor)$. The stamp
+Its public inputs are $(\actacc,\tgacc,\anchor)$. The stamp
 also publishes the tachygram multiset $\set{\tg_i}$. The target epoch is implied
 by the target $\anchor$ in the [anchor chain](#anchor).
 Alternatively, the stamp holds a `wtxid` reference to another transaction whose
@@ -887,17 +889,24 @@ polynomials at all.
 Our goal: prove non-membership of $\nf_e$ over an *entire epoch* at an amortized
 cost sublinear in $N$, the total number of tachygrams in epoch $e$.
 
-The idea is **bucketing**. Suppose we sort every tachygram into one of $2^k$
-buckets by a rule that (i) a nullifier can cheaply prove it follows and (ii)
-splits the field nearly evenly. Then $\nf_e$ falls into exactly one bucket, and
-it can only ever collide with the tachygrams sharing that bucket. Thus,
-non-membership across the whole epoch collapses to non-membership against a
-*single* bucket's accumulator, holding only $\approx N/2^k$ entries. We first
-collect the epoch into bounded, unfiltered input buckets, then pass pairs of
-buckets through a $k$-layer partition network. Each layer applies one new
-filter, and the final buckets are indexed by their $k$ filter outcomes.
-Quadratic residues provide filters that are cheap to prove and distribute the
-$N$ tachygrams nearly evenly in expectation.
+The idea is **bucketing**: partition the epoch's tachygrams into smaller groups
+so that a query needs to examine only one of them. Assign each tachygram a short
+**QR profile** using discriminants that the queried tachygram can also evaluate.
+The profile is derived deterministically from the tachygram, partitioning the
+tachygram space into disjoint classes. Thus $\nf_e$ belongs to exactly one class
+and, if it appeared during the epoch, must lie in the corresponding bucket.
+Epoch-wide non-membership therefore reduces to one accumulator opening against
+that bucket.
+
+To construct the profile buckets within the polynomial degree bound, first
+collect the epoch into bounded, unclassified root buckets. Routing repeatedly
+decomposes each bucket under the next QR discriminant and merges adjacent
+buckets assigned the same resulting profile whenever their union remains within
+capacity.
+Once all buckets for one profile merge into a single bounded bucket covering the
+full epoch, that bucket is final; otherwise those buckets continue through
+another routing round. QR discriminants make each decomposition cheap to prove
+while keeping expected profile loads nearly balanced.
 
 #### A number theory detour
 
@@ -916,14 +925,14 @@ x\in\NQR \iff c\cdot x \in\QR
 \end{cases}
 $$
 
-A **QR filter** is one such split with a random offset: draw $R \sample \F$ and
-classify $x$ by whether $x + R$ is a square, assigning the exceptional value
-$x=-R$ to the residue side. A random offset cuts any fixed epoch set roughly in
-half, and $k$ independent offsets $R_0, \ldots, R_{k-1}$ tag every element with a
-$k$-bit **QR profile** $\v{b} = (b_0, \ldots, b_{k-1}) \in \{0,1\}^k$, where $b_j=1$
+A **QR discriminant** is one such split under an offset $R$: classify $x$ by
+whether $x + R$ is a square, assigning the exceptional value $x=-R$ to the
+residue side. A random offset cuts any fixed epoch set roughly in half, and $k$
+distinct discriminants $R_0, \ldots, R_{k-1}$ tag every element with a $k$-bit
+**QR profile** $\v{b} = (b_0, \ldots, b_{k-1}) \in \{0,1\}^k$, where $b_j=1$
 iff $x+R_j$ is a square or zero (written as $x\in\QR_{R_j}$), and $b_j=0$
-otherwise (written as $x\in\NQR_{R_j}$). The $k$ filters together sort the field
-into $2^k$ disjoint buckets of roughly equal size in expectation.
+otherwise (written as $x\in\NQR_{R_j}$). The $k$ discriminants together sort the
+field into $2^k$ disjoint buckets of roughly equal size.
 
 For a claimed non-residue bit, the circuit must also prove $x+R_j\neq0$, for
 example with an inverse witness. Otherwise $x=-R_j$ could incorrectly take the
@@ -963,190 +972,199 @@ h(X) = \frac{g(X)^2 - c\cdot (X + R)}{\prod_i (X - x_i)}
 c\in\NQR,\quad \forall x_i\in\NQR_R
 $$
 
-#### QR-based Partition {#partition}
+#### QR Decomposition {#partition}
 
-With the [batched QR test](#batch-qr) above, we can construct an interactive
-oracle reduction from a QR-based partition instance to PCS evaluation instances.
-
-Define the **QR-based partition** relation for a pair of accumulators as follows.
-Let $c\in\NQR$ be a fixed public quadratic non-residue.
+With the [batched QR test](#batch-qr), we can reduce a QR decomposition claim to
+PCS evaluation claims. Let $f(X)$ be the square-free accumulator of a set $S$,
+and let $c\in\NQR$ be a fixed public quadratic non-residue. The relation is
 
 $$
 \left\{ \left(
 \begin{aligned}
-    \mathtt{x} &:= \cm_{p_0}, \cm_{p_1}, \cm_{q_0}, \cm_{q_1} \in\G,\, R\in\F; \\
-    \mathtt{w} &:= S_0,S_1
+    \mathtt{x} &:= \cm_f,\cm_{q_0},\cm_{q_1}\in\G, R\in\F;\\
+    \mathtt{w} &:= S
 \end{aligned}
 \right):\quad
 \begin{aligned}
-& p_0(X) = \prod_{x_i\in S_0} (X - x_i),\quad p_1(X) = \prod_{x_i\in S_1} (X - x_i) \\
-& q_0(X) = \prod_{x_i \in (S_0 \cup S_1) \cap \NQR_R} (X - x_i) \\
-& q_1(X) = \prod_{x_i \in (S_0 \cup S_1) \cap \QR_R} (X - x_i) \\
-& \cm_{p_0} = \mathsf{Com}(p_0(X)),\quad \cm_{p_1} = \mathsf{Com}(p_1(X)) \\
-& \cm_{q_0} = \mathsf{Com}(q_0(X)),\quad \cm_{q_1} = \mathsf{Com}(q_1(X))
+& f(X)=\prod_{x_i\in S}(X-x_i), &\cm_f=\mathsf{Com}(f(X))\\
+& q_0(X)=\prod_{x_i\in S\cap\NQR_R}(X-x_i), &\cm_{q_0}=\mathsf{Com}(q_0(X))\\
+& q_1(X)=\prod_{x_i\in S\cap\QR_R}(X-x_i), &\cm_{q_1}=\mathsf{Com}(q_1(X))
 \end{aligned}
 \right\}
 $$
 
-This relation preserves $S_0\cup S_1$ without adding or removing elements. The
-left output contains exactly its $\NQR_R$ elements, and the right output contains
-exactly its $\QR_R$ elements.
+It preserves $S$ without adding or removing elements. The left output contains
+exactly the $\NQR_R$ elements and the right output exactly the $\QR_R$ elements.
 
 <p align="center">
-  <a href="./assets/pair_partition.svg">
-    <img src="./assets/pair_partition.svg" alt="Pair-partition on a QR filter" />
+  <a href="./assets/qr_decomp.svg">
+    <img src="./assets/qr_decomp.svg" alt="QR decomposition of one bucket" />
   </a>
 </p>
 
 The reduction works as follows:
 
-- Prover interpolates $g^\QR(X), g^\NQR(X)$ as:
+- Prover interpolates $g^\QR(X),g^\NQR(X)$ such that
   $$
   \begin{aligned}
-  g^\QR(x_i) &= y_i &\qquad\text{where }
-      \forall x_i \in \QR_R \cap (S_0\cup S_1),\quad x_i + R = y_i^2\\
-  g^\NQR(x_i) &= y_i &\qquad\text{where }
-      \forall x_i \in \NQR_R \cap (S_0\cup S_1),\quad c\cdot (x_i + R) = y_i^2
+  g^\QR(x_i)&=y_i &&\text{where }x_i\in S\cap\QR_R,
+      \quad x_i+R=y_i^2,\\
+  g^\NQR(x_i)&=y_i &&\text{where }x_i\in S\cap\NQR_R,
+      \quad c\cdot(x_i+R)=y_i^2.
   \end{aligned}
   $$
-- Prover computes $h^\QR(X), h^\NQR(X)$ as:
+- Prover computes
   $$
-  \begin{aligned}
-  h^\QR(X) &= \frac{g^\QR(X)^2 - (X + R)}{q_1(X)} \\
-  h^\NQR(X) &= \frac{g^\NQR(X)^2 - c\cdot (X + R)}{q_0(X)}
-  \end{aligned}
+  h^\QR(X)=\frac{g^\QR(X)^2-(X+R)}{q_1(X)},\qquad
+  h^\NQR(X)=\frac{g^\NQR(X)^2-c\cdot(X+R)}{q_0(X)},
   $$
-  The prover commits to these four polynomials.
+  and commits to these four polynomials.
 - After all commitments are fixed, the verifier samples $r\sample\F$ and checks
   $$
   \begin{aligned}
-  p_0(r)\cdot p_1(r) &\iseq q_0(r)\cdot q_1(r),\\
-  g^\QR(r)^2-(r+R) &\iseq q_1(r)\cdot h^\QR(r),\\
-  g^\NQR(r)^2-c\cdot(r+R) &\iseq q_0(r)\cdot h^\NQR(r).
+  f(r)&\iseq q_0(r)\cdot q_1(r) &\text{(decomposition)}\\
+  g^\QR(r)^2-(r+R)&\iseq q_1(r)\cdot h^\QR(r) &\text{(QR purity)}\\
+  g^\NQR(r)^2-c\cdot(r+R)&\iseq q_0(r)\cdot h^\NQR(r) &\text{(NQR purity)}\\
+  q_0(-R)&\neq 0 &\text{(zero-value assignment)}
   \end{aligned}
   $$
-- The verifier also opens $q_0$ at $-R$ and requires $q_0(-R)\neq0$.
 
-The fixed-point check assigns the exceptional value $x=-R$ to $\QR_R$. The
-non-residue quotient identity alone cannot distinguish it, since $y=0$ satisfies
+The last check assigns the exceptional value $x=-R$ to $\QR_R$. The non-residue
+identity alone cannot distinguish it, since $y=0$ satisfies
 $y^2=c\cdot(x+R)=0$. Because $q_0$ is a product of linear factors,
 $q_0(-R)\neq0$ proves that $-R$ is absent from the non-residue output. Together
-with $p_0(X)\cdot p_1(X)=q_0(X)\cdot q_1(X)$, this forces it into $q_1$
-whenever it occurs.
+with $f(X)=q_0(X)\cdot q_1(X)$, this forces it into $q_1$ whenever it occurs.
 
-The [shared-evidence construction](#shared-headers) later splits these checks
-across fixed PCD steps to respect Ragu's polynomial-oracle budget.
+#### QR Bucket Routing {#qr-routing}
 
-<a id="iqt"></a>
-#### QR-predicated Partition Network {#pn}
+**Routing Round.**
+QR decomposition is the atomic algebraic relation: it takes one bounded bucket
+and returns its two factors under one discriminant. Bucket routing composes many
+such relations into **decompose-merge routing rounds**. A round decomposes
+its input buckets under the next discriminant and merges *adjacent* outputs
+with the *same extended profile* wherever their union remains within the bucket
+capacity.
 
-We now build a **partition network predicated on QR filters**. The network takes
-$n=2^k$ bounded input buckets and passes them through $k$ layers. Layer $j$ uses
-an independent predicate $\phi_j(x)\rightarrow\{0,1\}$. The network outputs $n$
-regrouped buckets satisfying
+The diagram below shows round $j$, using discriminant $R_j$. Its inputs
+$p_1,p_2,p_3$ are outputs of the preceding round, with $p_1$ and $p_2$ sharing
+one QR profile and $p_3$ carrying another. Decomposition sends each bucket's
+$\NQR_{R_j}$ tachygrams left and its $\QR_{R_j}$ tachygrams right. The resulting
+buckets inherit the input bucket's anchor range and append the corresponding
+class bit to its profile. Both outputs retain that range even when one is empty
+and represented by the unit polynomial. Consequently, outputs produced from
+different input profiles remain different even when they take the same side
+under $R_j$.
 
-$$
-T_i = \left\{x\in\bigcup_j S_j:
-(\phi_0(x),\ldots,\phi_{k-1}(x))=\mathsf{bits}_k(i)\right\}.
-$$
-
-For example, if $k=3$, then $T_5=T_{(101)}$ contains exactly the input elements
-with predicate profile
-$\phi_0(x)=1\land\phi_1(x)=0\land\phi_2(x)=1$.
+Merging then combines outputs only when two conditions hold: they have identical
+profiles, and their anchor ranges are contiguous. If the left bucket covers
+$[a_L,a_M]$ and the right covers $[a_M,a_R]$, their merged bucket covers the
+union $[a_L,a_R]$. A merge is performed only when the union remains within the
+bucket capacity. An output that cannot merge with its neighbor, such as the
+orange bucket in the diagram, remains a separate bucket with its original
+range.
 
 <p align="center">
-  <a href="./assets/pred_network.svg">
-    <img src="./assets/pred_network.svg" alt="Predicate-based Network Scheme" />
+  <a href="./assets/routing_round.svg">
+    <img src="./assets/routing_round.svg" alt="A routing round" />
   </a>
 </p>
 
-> The partition network enables sublinear membership and non-membership tests.
-> Before partitioning, a query must test the input buckets one by one. After
-> partitioning, it tests only the output bucket for the queried value's profile.
->
-> A suitable predicate family also distributes elements almost uniformly across
-> profiles. Independent QR filters provide this property over $\F_p$.
+Each routing round consumes $m$ buckets and, with high probability, emits
+$n\approx m$ buckets. Decomposition approximately halves each input, after which
+merging pairs of adjacent, same-profile outputs brings the resulting buckets
+back toward capacity.
 
-Let the root-bucket target be $B=8{,}000$, slightly below the maximum supported
-bucket size of $8{,}096$. Choose enough buckets that the probability of any
-intermediate or final bucket exceeding that maximum is negligible. Whether the
-$96$-element margin achieves the required tail bound remains a parameter-selection
-question. Pad the root bucket count with empty buckets $q(X)=1$ at the epoch's
-ending anchor to obtain $n=2^k$, then derive $k$ independent QR filters
-$\{R_j\}_{j\in[k]}$. The network proceeds as follows:
+Conveniently, each routing round is **highly parallelizable** and conducive to
+**streaming**. Decompositions are independent, while merges are local to ordered
+runs of same-profile buckets. The round can therefore be parallelized across
+those runs or pipelined over a stream of input buckets when memory is limited.
 
-1. **Prepare root buckets.** Scan the epoch's [stamps](#tx) in order and append
-   each stamp's tachygrams to the current unfiltered bucket. Close a bucket
-   before a bounded stamp would take it past the target $B$. The append relation
-   is
-   $$
-   q_\root'(X) = q_\root(X) \cdot \prod_{\tg_i\in \mathsf{stamp}}(X-\tg_i)
-   $$
-   Because the root has no filter, this update uses only the old and new bucket
-   polynomials. Each root proof certifies exactly the tachygrams in one disjoint,
-   contiguous segment of the epoch's [anchor chain](#anchor).
-2. **Apply the first filter.** Partition each consecutive pair of root buckets
-   under $R_0$. Each resulting pair covers the union of its input ranges: its
-   left bucket has profile `0` and contains the $\NQR_{R_0}$ elements, while its
-   right bucket has profile `1` and contains the $\QR_{R_0}$ elements.
-3. **Apply the remaining filters.** At layer $j$, pair consecutive buckets that
-   have the same $j$-bit profile and partition them under $R_j$. Append `0` or
-   `1` to the profile of each output. All pairs at one layer are independent and
-   can be proved in parallel.
+**Routing Network with a Jagged Frontier.**
+Every root bucket begins with a contiguous anchor range, and the root ranges
+together cover the epoch. Decomposition preserves these ranges, while each merge
+replaces two contiguous ranges by their union. This range invariant is what
+allows routing to turn many partial-epoch buckets into one full-epoch bucket for
+each final profile.
 
-After layer $k-1$, the network has $n=2^k$ leaf buckets. Every leaf covers the
-full epoch and contains exactly the tachygrams with one $k$-bit QR profile. If
-$n=1$, no partition is needed: the sole unfiltered root is also the sole leaf.
+Call a routing round **full** when it is applied across the entire current layer.
+After $k$ full rounds, most profiles may already have one bounded bucket covering
+the whole epoch. Capacity fluctuations can nevertheless leave several
+partial-epoch buckets with the same profile at that layer. As illustrated below,
+only those unresolved buckets need another, **partial** routing round. Their
+decompositions preserve the partial ranges, and merges between matching outputs
+extend those ranges until they cover the full epoch.
 
-The same network can process a stream incrementally when its filters are already
-known. We use this form for anchor-chain segments in the active epoch: root
-buckets are partitioned as they become available, and completed groups combine
-at successively higher layers.
+<p align="center">
+  <a href="./assets/jagged.svg">
+    <img src="./assets/jagged.svg" alt="A jagged frontier" />
+  </a>
+</p>
+
+This additional work creates a **jagged frontier**: buckets completed after the
+full rounds remain at depth $k$, while unresolved buckets continue to deeper
+profiles. A partial routing round can complete some of those profiles and leave
+others unresolved, so a branch may require more than one partial round.
+
+Zooming out, suppose root buckets $S_0,\ldots,S_{m-1}$ cover consecutive ranges
+of one epoch. The network applies $k$ full routing rounds to all active buckets,
+then zero or more partial routing rounds only to unresolved same-profile buckets.
+At depth $d$, the complete class for profile $\v{b}\in\{0,1\}^d$ is
+
+$$
+T_\v{b}=\left\{\tg\in\bigcup_i S_i:
+(\phi_0(\tg),\ldots,\phi_{d-1}(\tg))=\v{b}\right\}.
+$$
+
+Routing for $\v{b}$ is complete only when all of $T_\v{b}$ is represented by one
+bounded bucket whose anchor range covers the epoch. Final profiles may therefore
+have different depths. They form a prefix partition of the field, and every final
+bucket covers the whole epoch. QR balance controls the expected number of full
+and partial rounds, while decomposition and contiguous range unions preserve
+the epoch's tachygrams.
 
 <p align="center">
   <a href="./assets/qr_tree.svg">
-    <img src="./assets/qr_tree.svg" alt="Simple QR tree example" />
+    <img src="./assets/qr_tree.svg" alt="Adaptive QR bucket routing" />
   </a>
 </p>
 
-<a id="qr-filters">**QR Filter Sampling.**</a>
-For tachygrams, the filters must remain unpredictable while the epoch's values
-are chosen. Derive the first filter from chain entropy fixed at the end of the
-epoch, then derive each later filter with Poseidon:
+<a id="qr-discriminants">**QR Discriminant Choice.**</a>
+The discriminants must remain unpredictable while the epoch's tachygrams are
+chosen.
+Use the ending sentinel as the first discriminant, then increment sequentially:
 
 $$
-R_0=H(\sntl_{e+1}),\qquad R_{j+1}=H(R_j).
+R_0=\sntl_{e+1},\qquad R_{j+1}=R_j+1.
 $$
 
 Root buckets may be built while the epoch is active because they apply no
-filter, but their partition network is built only after $\sntl_{e+1}$ fixes
-$R_0$. This assumes the chain entropy is sufficiently hard to bias. Anchor-side
-filters may instead derive from the starting sentinel, which is known before the
-active epoch begins.
+discriminant, but routing begins only after $\sntl_{e+1}$ fixes $R_0$. This
+assumes the chain entropy is sufficiently hard to bias. Consecutive
+discriminants are not statistically independent, but their QR classes have
+*negligible correlation* and retain an almost-uniform profile
+partition.[^qr-correlation]
 
-**Fixed-size public inputs.** An output bucket at layer $j$ exposes its range,
-layer $j$, profile $\v{b}=(b_0,\ldots,b_j)$ interpreted as the binary integer
-$b$ and represented in the circuit as a field element, the filter $R_j$ just
-applied, and its accumulator commitment. To partition two such buckets at the
-next layer, derive $R_{j+1}=H(R_j)$. The outputs satisfy
+[^qr-correlation]: Writing $\chi$ for the quadratic character, distinct
+    translates satisfy
+    $\sum_{t\in\F_p}\chi(t+a)\chi(t+b)=-1$, while standard character-sum bounds
+    place each fixed $k$-bit profile within $O(k\sqrt p)$ of $p/2^k$ field
+    elements, apart from the zero convention. Since random $R_0$ translates each
+    fixed input uniformly, expected bucket loads are correspondingly balanced;
+    for $k=32$ in the protocol field, the relative deviation is negligible.
 
-$$
-j'=j+1,\qquad b'=2b+b_{j+1},
-$$
+**Queries and cost.** A service publishes all full-epoch final buckets and their
+proofs. To query $\tg$, a consumer derives successive discriminants and
+profile bits until they select a final profile. It then tests $q_\v{b}(\tg)=0$ for
+membership or $q_\v{b}(\tg)\neq 0$ for non-membership against that one bucket.
+Routing processes a tachygram once per depth it traverses; this one-time work is
+amortized across later queries.
 
-where $b_{j+1}=0$ for the $\NQR_{R_{j+1}}$ output and $b_{j+1}=1$ for the
-$\QR_{R_{j+1}}$ output. The base layer similarly derives $R_0$ from the ending
-sentinel and emits $b=b_0$. Thus every partition relation has a fixed number of
-public inputs, independent of tree depth.
-
-**Queries and cost.** A service publishes all full-epoch leaf buckets and their
-PCD proofs. To query $x$, a consumer computes $b_0$ under $R_0$, then computes one
-additional profile bit per recursive step while deriving $R_{j+1}=H(R_j)$ and
-accumulating $b'=2b+b_{j+1}$. It selects the leaf with the resulting
-$(j,b,R_j)$ and tests $q_b(x)=0$ for membership or $q_b(x)\neq0$ for
-non-membership. The query makes one polynomial query against an accumulator
-within the PCS degree limit. Building the network processes every tachygram once
-per layer; that one-time cost is amortized across later queries.
+A 32-bit profile is sufficient for our intended scale. Even at $50K$
+two-input-two-output transactions ($8$ tachygrams each) per second for a two-week
+epoch, there are fewer than $4.84\times10^{11}$ tachygrams, or fewer than
+$6.1\times10^7$ root buckets at $8{,}000$ entries each.  Thus 32 bits is ample
+for $k=\log_2(6.1\times10^7)\leq 26$. This leaves room for an unlikely unbalanced
+profile while keeping the complete profile derivation and QR checks compact.
 
 ### Transaction Life Cycle {#txflow}
 
@@ -1161,8 +1179,8 @@ Tachyon differs in two main respects:
   note to prove nullifier exclusion across past epochs. This work can be
   delegated to an OSS without identifying the note, after which the wallet
   binds the returned exclusion proof to its local derivation and may privately
-  advance the anchor. Because Spend and Output proofs have very different
-  workloads, they no longer share one circuit or proof path.
+  advance the anchor. Spend and Output proofs have very different workloads and
+  can be prepared independently.
 - **PCD aggregation.** The action proofs in one bundle are folded into a
   [Tachyon stamp](#tx), and finished stamps from different transactions may be
   folded again into one aggregate proof.
@@ -1177,35 +1195,34 @@ The transaction flow is as follows:
 
 1. **Initialize the spendability proof.** Once the note's creation block is
    included on chain, the wallet proves that the note commitment belongs to its
-   creation stamp and authenticates the remaining anchor-chain transitions
-   through the block's final anchor. The resulting proof can support an
-   immediate same-epoch spend or be cached for later synchronization. Within
-   the inclusion epoch, the wallet may advance its anchor locally, without
-   delegated work, to avoid revealing the exact inclusion anchor.
+   creation stamp and records that stamp's resulting anchor. The final stamp
+   later authenticates the path from this anchor to its consensus-checked target.
+   The resulting proof supports an immediate same-epoch spend. Within the active
+   epoch, the wallet may advance its anchor locally, without delegated work, to
+   avoid revealing the exact inclusion anchor.
 
 2. **Synchronize spendability: local derivation and delegated exclusion.** To
-   spend a note from a past epoch, the wallet advances the cached proof to a
-   recent anchor, typically the starting sentinel $\sntl_e$ of the spending
-   epoch $e$. This requires proving that the note remained unspent after the
-   cached anchor. The wallet locally derives the required epoched nullifiers and
-   commits to them with a [ranged nullifier commitment](#nf-flow). In parallel,
-   it may give one or more OSSs opaque lists of $(i,\nf_i)$ values. The OSS
-   proves each value absent from its assigned authenticated portion of epoch
-   $i$ and commits to the epoched nullifiers it tested.
+   spend a note from a past epoch, the wallet derives the required epoched
+   nullifiers. It directly proves inclusion-epoch exclusion and commits any
+   later range with a [ranged nullifier commitment](#nf-flow). It may give one
+   or more OSSs opaque lists of $(i,\nf_i)$ values. For every delegated epoch,
+   the OSS proves the value absent from authenticated full-epoch tachygram
+   history and commits to the epoched nullifiers it tested.
 
    The request and returned exclusion proof are note-independent: OSS cannot
    differentiate a syncing request from a decoy request unrelated to any note.
    After the proofs return, the wallet shows that the epoched nullifiers
-   tested by the OSS form an indexed subset of its locally derived range. This binds
-   the two independently constructed branches into an unspent proof, which is
-   then folded into the cached spendability proof. The wallet may locally
-   cover a final anchor segment beyond the OSS endpoint before spending.
+   tested by the OSS form an indexed subset of its locally derived range. This
+   binds the delegated exclusions to the local derivation without revealing the
+   note. Together, authenticated creation membership and the required exclusion
+   evidence establish spendability through the completed epochs. A final
+   active-epoch anchor segment may be covered locally before spending.
 
 3. **Fold the action proofs into a stamp.** Output actions are independent of
    historical anchors, require no synchronization, and can be constructed when
    the transaction is prepared. The wallet folds all action proofs into one
-   [Tachyon stamp](#tx). The stamp contains the aggregated PCD proof and public
-   header
+   [Tachyon stamp](#tx). The stamp contains the aggregated PCD proof with public
+   inputs
 
    $$
    (\actacc,\tgacc,\anchor).
@@ -1255,7 +1272,7 @@ $\set{\tg_i}$, $\tgacc$, and $\anchor$, the validator:
    $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$.
 3. confirms that $\actacc$ commits to the Poseidon digests of the covered
    Action descriptions and that $\tgacc$ commits to $\set{\tg_i}$.
-4. verifies the stamp's PCD proof against the header
+4. verifies the stamp's PCD proof against the public inputs
    $(\actacc,\tgacc,\anchor)$. The proof enforces the integrity of both
    accumulators, the revealed nullifiers and output commitments, and the initial
    inclusion and past exclusion of every spent note.
@@ -1275,18 +1292,15 @@ claim ends:
   anchor in epoch $e$. No nullifier-exclusion claim is needed before that point,
   because the note did not yet exist. Anchor-chain authenticity then connects
   the inclusion anchor to the target $\anchor$.
-- **Past-epoch spend.** Inclusion is established in an earlier epoch, and
-  nullifier exclusion is proven from the inclusion anchor through the start of
-  epoch $e$, $\sntl_e$. From $\sntl_e$ onward, the proof establishes
-  anchor-chain authenticity through the target $\anchor$ but makes no further
-  exclusion claim.
+- **Past-epoch spend.** Authenticated closed-epoch history establishes inclusion
+  in epoch $e_\incl$, and authenticated full-epoch histories prove nullifier
+  exclusion for every epoch in $[e_\incl,e)$. This reaches $\sntl_e$. An
+  authenticated active-epoch chain segment then reaches the target $\anchor$
+  without making a further exclusion claim.
 
 Thus, in either case, the stamp proves the required inclusion, all required
 exclusion before epoch $e$, and an authentic path to its target anchor.
 It does not claim that $\nf_e$ is absent from epoch $e$.
-A particular stamp may prove more: for example, its underlying spendability proof
-may establish exclusion as far as the target anchor within epoch $e$. However,
-an in-epoch stamp lift can advance that target using anchor-chain evidence alone.
 *The target anchor therefore cannot be interpreted as an exclusion endpoint*. The
 stamp guarantees only the required exclusion prior to epoch $e$: through
 $\sntl_e$ for an older note, while a same-epoch note requires no past exclusion.
@@ -1413,8 +1427,8 @@ the prover knows the secret witness:
 - $\mathsf{Note}:=(\pk,v,\psi,\rcm)$: note opening
 - $(\ak,\nk)$: authorization key and nullifier key
 - $e_\incl$: the note's inclusion epoch
-- authenticated tachygram and anchor-chain history witnessing inclusion and
-  every required past-nullifier exclusion
+- authenticated active anchor-chain and closed-epoch QR-bucket evidence
+  witnessing inclusion and every required past-nullifier exclusion
 - the randomizers $\alpha,\theta,\rcv$
 
 such that the following conditions hold:
@@ -1436,18 +1450,14 @@ such that the following conditions hold:
     [accumulator](#acc), i.e. $f^\tg(\cm)=0$.
   - **Creation stamp integrity**: an authenticated [anchor-chain](#anchor)
     history links the creation stamp to the target $\anchor$.
-- **Past Nullifier Exclusion**: within the relevant historical range, past
-  nullifiers never appear on chain and therefore never belong to a historical
-  tachygram accumulator. This range begins at the end-of-block anchor of the
-  note's inclusion block and ends at the starting sentinel $\sntl_e$ of the
-  spending epoch. For every epoch $i$ intersected by this anchor range:
+- **Past Nullifier Exclusion**: for every complete past epoch
+  $i\in[e_\incl,e)$, the nullifier never appears in that epoch's tachygrams:
   - **Past nullifier derivation**: $k=\mathsf{KDF}(\nk,\psi)$ and
     $\nf_i=f_k(i)$.
-  - **Nullifier nonmembership**: every tachygram accumulator committed by an
-    anchor in the epoch-$i$ portion of this range evaluates nonzero at $\nf_i$.
-  - **Tachygram accumulator integrity**: every tachygram accumulator used in a
-    nonmembership test is committed as part of the authenticated anchor-chain
-    history.
+  - **Nullifier nonmembership**: the routed full-epoch accumulator selected by
+    $\nf_i$'s profile evaluates nonzero at $\nf_i$.
+  - **Tachygram integrity**: its certificate binds the accumulator to all
+    authenticated stamps between $\sntl_i$ and $\sntl_{i+1}$.
 - **Spend-time Nullifier Integrity**: $\nf_e$ and $\nf_{e+1}$ are this note's
   [nullifiers](#nf) at epochs $e,e+1$, derived from
   $k=\mathsf{KDF}(\nk,\psi)$ and therefore bound to $\cm$; both are constrained
@@ -1456,7 +1466,7 @@ such that the following conditions hold:
 #### Bundle-level Statement {#bundle}
 
 The bundle statement glues the per-action statements together. Given the public
-header and published tachygrams:
+inputs and published tachygrams:
 
 - $\anchor$: the common target anchor, which implies the target epoch;
 - $\actacc$: the [Action multiset](#tx) commitment;
@@ -1510,9 +1520,9 @@ decomposition of monolithic statement into a tree of sub-statement sound.
 
 As previewed in the [Tachyon transaction flow](#txflow),
 the wallet proves note-specific facts, the OSS proves absence
-of nullifiers over past epochs, and shared epoch evidence supplies their
-authenticated anchor chain history. The wallet bridges those branches only after
-the OSS proof returns.
+of nullifiers over past epochs, and shared evidence supplies closed-epoch QR
+buckets and active anchor-chain segments. The wallet bridges those branches only
+after the OSS proof returns.
 
 #### Shared Evidence: Anchor Chain and Tachygram Accumulator {#shared-headers}
 
