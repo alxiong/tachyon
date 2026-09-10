@@ -1471,6 +1471,44 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     assert_eq!(elapsed_seq.commit(), nf_seq.commit());
 }
 
+/// The largest spendable epoch is `EPOCH_MAX - 1`: the pair read needs a
+/// following epoch's member, so the final epoch's own window is the last one
+/// that can serve a spend. Its complement has a lower run and no tail.
+#[test]
+fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
+    let spend_epoch = EpochIndex::new(EPOCH_MAX - 1);
+    let range = user.derivation_pcd(rng, note, epoch_start, EpochIndex::new(EPOCH_MAX));
+    let window = user.covering_window(&note, &range);
+
+    let synthetic_spendable = (
+        note.commitment(),
+        (spend_epoch, user.nf_at(&note, spend_epoch)),
+        Anchor::from(Fp::ZERO),
+    );
+    let (nf_seq, complement_seq, nf_next) =
+        witness::spend_bind((synthetic_spendable, *range.data()), &window);
+
+    assert_eq!(
+        nf_next,
+        user.nf_at(&note, EpochIndex::new(EPOCH_MAX)),
+        "the pair's second half is the final epoch's member"
+    );
+    assert_eq!(
+        nf_seq.commit(),
+        NfSeqPoly::new(epoch_start, &window).commit()
+    );
+    assert_eq!(
+        complement_seq.commit(),
+        NfSeqPoly::new(epoch_start, &window[..window.len() - 2]).commit(),
+        "the read pair ends the window, so the complement is its lower run alone"
+    );
+}
+
 #[test]
 fn unspent_bind_rejects_elapsed_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);

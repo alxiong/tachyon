@@ -239,7 +239,8 @@ pub fn spendable_init(
 /// derivation header's range; `nf_next` is the next epoch's member, and the
 /// complement is the window's runs on both sides of the read pair,
 /// multiplied. The pair read requires the derivation range to extend at
-/// least one epoch past the spendable's epoch.
+/// least one epoch past the spendable's epoch, which bounds the spendable
+/// epoch at `EPOCH_MAX - 1`: the final epoch has no member to pair with.
 #[must_use]
 #[expect(
     clippy::as_conversions,
