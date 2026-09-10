@@ -1124,8 +1124,8 @@ and partial rounds, while decomposition and contiguous range unions preserve
 the epoch's tachygrams.
 
 <p align="center">
-  <a href="./assets/qr_tree.svg">
-    <img src="./assets/qr_tree.svg" alt="Adaptive QR bucket routing" />
+  <a href="./assets/qr_routing_network.svg">
+    <img src="./assets/qr_routing_network.svg" alt="Adaptive QR bucket routing" />
   </a>
 </p>
 
@@ -1157,12 +1157,11 @@ almost-uniform profile partition.[^qr-correlation]
     for $k=32$ in the protocol field, the relative deviation is negligible.
 
 **Queries and cost.** After the epoch closes, a service reveals $R_0$ and
-publishes all full-epoch final buckets and their proofs. To query $\tg$, a
-consumer derives successive discriminants and profile bits until they select a
-final profile. It then tests $q_\v{b}(\tg)=0$ for membership or
-$q_\v{b}(\tg)\neq 0$ for non-membership against that one bucket. Routing
-processes a tachygram once per depth it traverses; this one-time work is
-amortized across later queries.
+publishes all full-epoch final buckets. To query $\tg$, a consumer derives
+successive discriminants and profile bits until they select a final profile. It
+then tests $q_\v{b}(\tg)=0$ for membership or $q_\v{b}(\tg)\neq 0$ for
+non-membership against that one bucket. Routing processes a tachygram once per
+depth it traverses; this one-time work is amortized across later queries.
 
 A 32-bit profile is sufficient for our intended scale. Even at $50K$
 two-input-two-output transactions ($8$ tachygrams each) per second for a two-week
@@ -1170,6 +1169,42 @@ epoch, there are fewer than $4.84\times10^{11}$ tachygrams, or fewer than
 $6.1\times10^7$ root buckets at $8{,}000$ entries each.  Thus 32 bits is ample
 for $k=\log_2(6.1\times10^7)\leq 26$. This leaves room for an unlikely unbalanced
 profile while keeping the complete profile derivation and QR checks compact.
+
+#### QR Bucket Tree {#qr-bucket-tree}
+
+The routing network above produces one proof per final bucket. Retaining and
+serving every proof is unnecessary: as an orthogonal post-processing step, the
+OSS folds any chosen set of final-bucket proofs into one proof committing to a
+**QR bucket tree**.
+
+The QR bucket tree is a Poseidon Merkle tree over any chosen set of final
+buckets. A leaf binds the epoch, its sentinel endpoints, $R_0$, the profile
+depth $j$, the encoded profile $b$, and the bucket's tachygram-set commitment
+$\mathsf{Com}(q_\v{b}(X))$. The folded proof attests that every included leaf
+came from a valid full-epoch routing bucket and that all leaves use the same
+epoch metadata. Its public output is a single authenticated tree root.
+
+<p align="center">
+  <a href="./assets/qr_tree.svg">
+    <img src="./assets/qr_tree.svg" alt="Adaptive QR bucket routing" />
+  </a>
+</p>
+
+We use Poseidon's rate as the Merkle arity. With rate $4$, the tree is
+quaternary and has depth $\lceil\log_4 n\rceil$ for $n$ final buckets, half the
+depth of a binary tree. At the intended maximum of fewer than $2^{26}$ buckets,
+an opening requires at most $13$ Poseidon hashes.
+
+The tree need not contain every final bucket: even a single-leaf tree is valid.
+It only needs to contain the bucket used by a query. The OSS retains its chosen
+final buckets, their Merkle tree, and one proof for the root. A query supplies
+the selected leaf and its Merkle path rather than the bucket's original routing
+proof. After authenticating the leaf against the tree root, the consumer derives
+the claimed profile from $(R_0,j)$, checks its encoding $b$, and performs the
+same polynomial membership or non-membership test as before. This layer does
+not replace or alter routing: it only compresses a set of already proven
+buckets into one reusable certificate. Since routing runs in flight, tree
+construction is the only post-epoch work on the critical path.
 
 ### Transaction Life Cycle {#txflow}
 
@@ -1526,16 +1561,18 @@ decomposition into a tree of sub-statements sound.
 As previewed in the [Tachyon transaction flow](#txflow),
 the wallet proves note-specific facts, the OSS proves absence
 of nullifiers over past epochs, and shared evidence supplies closed-epoch QR
-buckets and active anchor-chain segments. The wallet bridges those branches only
-after the OSS proof returns.
+bucket trees, authenticated bucket openings, and active anchor-chain segments.
+The wallet bridges those branches only after the OSS proof returns.
 
-#### Shared Evidence: Anchor Chains and QR Buckets {#shared-headers}
+#### Shared Evidence: Anchor Chains and QR Bucket Trees {#shared-headers}
 
-Shared evidence has two final forms. Ordinary $\mathtt{AnchorChain}$ evidence
-advances stamps within the active epoch. Closed-epoch $\mathtt{QrBucket}$
-evidence authenticates all tachygrams of one past epoch and supports one-bucket
-membership and non-membership queries. $\mathtt{Summary}$ is an intermediate
-shared header used to construct QR buckets; anchor chains do not use QR routing.
+Shared evidence has two durable final forms. Ordinary $\mathtt{AnchorChain}$
+evidence advances stamps within the active epoch. Closed-epoch
+$\mathtt{QrBucketTree}$ evidence authenticates a set of final QR buckets under
+one Merkle root. $\mathtt{Summary}$ and $\mathtt{QrBucket}$ are
+intermediate shared headers used to construct that tree. A query opens one
+tree leaf into a $\mathtt{QrBucketOpening}$; anchor chains do not use QR
+routing.
 
 **Active anchor chains.** An anchor-chain header is simply
 
@@ -1755,16 +1792,70 @@ flowchart TB
   peer1 --> Merge1 --> merged1 -->|full epoch| Seal1 --> bucket1
 ```
 
-Final profiles may have different depths. A consuming step verifies that the
-first $j$ QR classifications of $x$ encode $b$, checks that $R_j$ is the next
-discriminant derived from the network's revealed $R_0$, and matches the
-remaining bucket metadata. Every non-residue profile bit also requires
-$x+R_i\neq0$. The step then opens $q_b$ at $x$ for membership or
-non-membership.
+**QR bucket tree.** $\mathsf{QrBucketTreeSeed}$ consumes one
+$\mathtt{QrBucket}$ proof and hashes the leaf payload
+
+$$
+(e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b(X)))
+$$
+
+with domain-separated Poseidon. It derives $R_0=R_j-j$ from the bucket's next
+discriminant and emits
+
+$$
+\mathtt{QrBucketTree}\{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}.
+$$
+
+$\mathsf{QrBucketTreeFuse}$ recursively folds two tree proofs, requires their
+headers to agree on $(e,\sntl_e,\sntl_{e+1},R_0)$, and hashes their roots into a
+new rate-$4$ Poseidon Merkle node. Every seed or fuse output is already a valid
+$\mathtt{QrBucketTree}$; there is no sealing step or coverage requirement. A
+single seed is a valid one-leaf tree. Since every leaf proof is a sound
+full-epoch $\mathtt{QrBucket}$ proof, the tree only needs to preserve common
+epoch metadata and authenticate whichever leaves it contains. The OSS may
+discard the individual bucket proofs after folding them.
+
+$\mathsf{QrBucketTreeOpen}$ consumes $\mathtt{QrBucketTree}$ and privately
+witnesses one leaf payload and its quaternary Merkle path. It verifies the path
+against $\mathsf{root}^\QR$ and emits
+
+$$
+\mathtt{QrBucketOpening}\{e,\sntl_e,\sntl_{e+1},R_0,j,b,
+  \mathsf{Com}(q_b(X))\}.
+$$
+
+This step performs only leaf authentication. A consuming query step then
+derives the first $j$ discriminants from $R_0$, checks that the QR
+classifications of $x$ encode $b$, and opens $q_b$ at $x$ for membership or
+non-membership. Every non-residue profile bit also requires $x+R_i\neq0$.
+Separating the Merkle path from profile derivation and the polynomial query
+keeps both steps bounded.
+
+```mermaid
+flowchart TB
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
+
+  bucket0["$$\mathtt{QrBucket}_0$$"]:::s
+  bucket1["$$\mathtt{QrBucket}_1$$"]:::s
+  seed0(["$$\mathsf{QrBucketTreeSeed}$$"]):::o
+  seed1(["$$\mathsf{QrBucketTreeSeed}$$"]):::o
+  tree0["$$\mathtt{QrBucketTree}_0$$"]:::s
+  tree1["$$\mathtt{QrBucketTree}_1$$"]:::s
+  fuse(["$$\mathsf{QrBucketTreeFuse}$$"]):::o
+  tree["$$\mathtt{QrBucketTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
+  open(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
+  opening["$$\mathtt{QrBucketOpening}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b)\}$$"]:::s
+
+  bucket0 --> seed0 --> tree0 --> fuse
+  bucket1 --> seed1 --> tree1 --> fuse
+  fuse --> tree --> open --> opening
+```
 
 The diagram below summarizes the active anchor-chain and closed-epoch QR
 headers. $\mathtt{AnchorChain}$ may end at the active tip;
-$\mathtt{QrBucket}$ is available only for complete past epochs.
+$\mathtt{QrBucketTree}$ and its bucket openings are available only for complete
+past epochs.
 
 <p align="center">
   <a href="./assets/shared_headers.svg">
@@ -1856,12 +1947,13 @@ these sub-statements respectively:
 When a wallet comes back online, it may rebuild or refresh spendability proofs
 for all its unspent notes. Once a note's inclusion epoch $e_\incl$ is in the
 past, spending it requires proving exclusion across every intervening epoch.
-The inclusion branch and exclusion branch remain independent. A membership
-opening against the $\mathtt{QrBucket}$ selected by $\cm$'s profile proves that
-$\cm$ occurred in epoch $e_\incl$. Separately, the user-owned
-$\mathsf{VerifiedUnspentInit}$ consumes only the $\mathtt{QrBucket}$ selected by
-$\nf_{e_\incl}$'s profile. It privately witnesses the note opening and
-$(\ak,\nk)$, then enforces
+The inclusion branch and exclusion branch remain independent. Each first opens
+its selected bucket from the epoch's $\mathtt{QrBucketTree}$. A membership opening
+against the resulting $\mathtt{QrBucketOpening}$ proves that $\cm$ occurred in
+epoch $e_\incl$. Separately, the user-owned
+$\mathsf{VerifiedUnspentInit}$ consumes only the $\mathtt{QrBucketOpening}$
+selected by $\nf_{e_\incl}$'s profile. It privately witnesses the note opening
+and $(\ak,\nk)$, then enforces
 
 $$
 \begin{aligned}
@@ -1872,10 +1964,10 @@ k&=\mathsf{KDF}(\nk,\psi),&
 \end{aligned}
 $$
 
-It copies $e_\incl$ and both sentinels from the bucket, derives the nullifier's
-complete QR profile, matches $(j,b,R_j)$, and proves
+It copies $e_\incl$ and both sentinels from the opening, derives the nullifier's
+complete QR profile from $(R_0,j)$, matches $b$, and proves
 $q_b(\nf_{e_\incl})\neq0$. Thus the output $\cm$ and excluded nullifier come from
-the same note, while the one-step QR query proves absence from the whole epoch.
+the same note, while the QR query proves absence from the whole epoch.
 The step emits
 
 $$
@@ -1890,10 +1982,10 @@ $\mathsf{UnspentSeed}\rightarrow\mathsf{UnspentLift}\rightarrow
 for delegated, extensible later ranges.
 
 $\mathsf{SpendableReinit}$ consumes the singleton $\mathtt{VerifiedUnspent}$ and
-the independent $\cm$ bucket. It requires the same epoch and sentinel endpoints,
-carries $\cm$ from the verified header, derives its complete QR profile, and
-proves $q_{b'}(\cm)=0$. It does not reopen the note, derive or test a nullifier,
-or consume anchor-chain evidence. It emits the fully established
+the independent $\cm$ bucket opening. It requires the same epoch and sentinel
+endpoints, carries $\cm$ from the verified header, derives its complete QR
+profile, and proves $q_{b'}(\cm)=0$. It does not reopen the note, derive or test
+a nullifier, or consume anchor-chain evidence. It emits the fully established
 
 $$
 \mathtt{Spendable}\{\cm,e_\incl+1,\sntl_{e_\incl+1}\}.
@@ -1911,9 +2003,11 @@ flowchart TB
   nf["$$\mathtt{Nullifiers}\\ \{\cm,k,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
   unspent["$$\mathtt{Unspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
   unspentprime["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
-  inclNfBucket["$$\mathtt{QrBucket}\text{ for }\nf_{e_\incl}\\ \{e_\incl,\ldots\}$$"]:::s
-  laterNfBucket["$$\mathtt{QrBucket}\\ \{i,\sntl_i,\sntl_{i+1},j,b,R_j,\mathsf{Com}(q_b)\}$$"]:::s
-  cmBucket["$$\mathtt{QrBucket}\text{ for }\cm\\ \{e_\incl,\ldots)\}$$"]:::s
+  inclTree["$$\mathtt{QrBucketTree}_{e_\incl}$$"]:::s
+  laterTree["$$\mathtt{QrBucketTree}_i$$"]:::s
+  inclNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_{e_\incl}$$"]:::s
+  laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
+  cmBucket["$$\mathtt{QrBucketOpening}\text{ for }\cm$$"]:::s
   spendable["$$\mathtt{Spendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
   spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
@@ -1926,8 +2020,14 @@ flowchart TB
   SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
   SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
+  OpenInclNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
+  OpenLaterNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
+  OpenCm(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
 
   UnspentSeed --> unspent
+  inclTree --> OpenInclNf --> inclNfBucket
+  laterTree --> OpenLaterNf --> laterNfBucket
+  inclTree --> OpenCm --> cmBucket
   unspent --> UnspentLift --> unspentprime
   laterNfBucket --> UnspentLift
   UnspentBind --> vfylater
@@ -1979,11 +2079,11 @@ $\mathsf{UnspentSeed}$ creates the empty range $[s_L,s_L)$ with
 $g_{s_L,s_L}(X)=1$. This seed cannot be bound into a spendable proof until at
 least one epoch is appended. Each $\mathsf{UnspentLift}$:
 
-- requires its current right sentinel to equal the input $\mathtt{QrBucket}$'s
-  left sentinel;
-- requires that bucket to cover the next epoch $i=s_R$;
-- takes the opaque $\nf_{s_R}$ as witness, derives its complete QR profile,
-  matches the bucket's $(j,b,R_j)$, and proves
+- requires its current right sentinel to equal the input
+  $\mathtt{QrBucketOpening}$'s left sentinel;
+- requires that opening to cover the next epoch $i=s_R$;
+- takes the opaque $\nf_{s_R}$ as witness, derives its complete QR profile from
+  $(R_0,j)$, matches $b$, and proves
   $q_b(\nf_{s_R})\neq0$ in the same query step; and
 - appends the [indexed factor $F_{s_R,\nf_{s_R}}(X)$](#nf-flow), fixing the old
   and new commitments before the oracle challenge and enforcing
@@ -2032,8 +2132,8 @@ The singleton inclusion-epoch $\mathtt{VerifiedUnspent}$ is built and consumed
 separately at reinitialization. Beyond it, both branches remain extendable. The
 wallet extends its local commitment by applying $\mathsf{NullifierDerive}$ again;
 an OSS extends a range beginning no earlier than $e_\incl+1$ by applying
-$\mathsf{UnspentLift}$ to the next full-epoch $\mathtt{QrBucket}$. That later
-range need not fix its final endpoint in advance.
+$\mathsf{QrBucketTreeOpen}$ and $\mathsf{UnspentLift}$ to the next full-epoch tree.
+That later range need not fix its final endpoint in advance.
 
 A wallet may also delegate different ranges to different OSSs. To combine two
 adjacent results, $\mathsf{UnspentMerge}$ takes
@@ -2450,10 +2550,10 @@ notes, a wallet:
 2. independently extends one local $\mathtt{Nullifiers}$ header and delegates
    opaque nullifiers and sentinel-bounded epoch ranges to one or more OSSs;
 3. after the inclusion epoch closes, directly binds its derived
-   $\nf_{e_\incl}$ to one $\mathtt{QrBucket}$ through
+   $\nf_{e_\incl}$ to one $\mathtt{QrBucketOpening}$ through
    $\mathsf{VerifiedUnspentInit}$, then joins that singleton exclusion with the
-   separate $\cm$ bucket at $\mathsf{SpendableReinit}$; later lifts consume
-   ranges beginning at $e_\incl+1$; and
+   separate $\cm$ bucket opening at $\mathsf{SpendableReinit}$; later lifts
+   consume ranges beginning at $e_\incl+1$; and
 4. folds the updated spends and reusable anchorless outputs into a fresh
    [stamp](#tx), advances it with active $\mathtt{AnchorChain}$ evidence if
    needed, then performs authorization.
