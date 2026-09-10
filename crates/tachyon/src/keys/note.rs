@@ -155,8 +155,8 @@ mod tests {
         let psi = nullifier::Trapdoor::random(rng);
         let mk = nk.derive_note_private(psi);
         assert_ne!(
-            mk.derive_nullifier(EpochIndex(0u32)),
-            mk.derive_nullifier(EpochIndex(1u32)),
+            mk.derive_nullifier(EpochIndex::new(0u32)),
+            mk.derive_nullifier(EpochIndex::new(1u32)),
         );
     }
 }

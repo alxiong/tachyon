@@ -919,11 +919,12 @@ pub(crate) fn build_unspent_pcd_between_anchors<RNG: CryptoRng>(
     // A span between two anchors is an interval of stamps. Cut that interval by
     // epoch. Each epoch after the first segment begins with a crossing out of
     // the one before it.
-    let leaves: Vec<Pcd<pool::ArbitraryUnspent>> = (base_epoch.0..=end_height.epoch().0)
-        .map(EpochIndex)
+    let leaves: Vec<Pcd<pool::ArbitraryUnspent>> = (u32::from(base_epoch)
+        ..=u32::from(end_height.epoch()))
+        .map(EpochIndex::new)
         .map(|epoch| {
             let crossing = (epoch != base_epoch).then(|| {
-                let leaving = EpochIndex(epoch.0 - 1);
+                let leaving = EpochIndex::new(u32::from(epoch) - 1);
                 (leaving, pool.block(leaving.last_block()).anchor())
             });
             let stamps: Vec<_> = (start_height.0.max(epoch.first_block().0)
@@ -1004,7 +1005,8 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
     let left_el = elapsed_slice(left_epoch_start, left_epoch_last);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_last);
     assert_eq!(
-        right_epoch_start.0, left_epoch_last.0,
+        u32::from(right_epoch_start),
+        u32::from(left_epoch_last),
         "fused chains must meet inside one epoch"
     );
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
@@ -1104,8 +1106,8 @@ impl WalletSim {
         range: &Pcd<delegation::NullifierDerivation>,
     ) -> Vec<Nullifier> {
         let (_, start, _, last) = *range.data();
-        (start.0..=last.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
+        (u32::from(start)..=u32::from(last))
+            .map(|epoch| self.nf_at(note, EpochIndex::new(epoch)))
             .collect()
     }
 
@@ -1150,8 +1152,8 @@ impl WalletSim {
         epoch_start: EpochIndex,
         epoch_last: EpochIndex,
     ) -> Pcd<delegation::NullifierDerivation> {
-        let base = epoch_start.0 - epoch_start.0 % PoseidonFp::RATE as u32;
-        let windows = (epoch_last.0 - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
+        let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
+        let windows = (u32::from(epoch_last) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_last = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
         let key = (Tachygram::from(note.commitment()), base, cover_last);
         if let Some(pcd) = self.derivations.borrow().get(&key) {
@@ -1161,8 +1163,9 @@ impl WalletSim {
 
         let mut merged: Option<Pcd<delegation::NullifierDerivation>> = None;
         for window in 0..windows {
-            let chunk_start = EpochIndex(base + window * NF_DERIVATION_WIDTH as u32);
-            let chunk_last = EpochIndex(chunk_start.0 + NF_DERIVATION_WIDTH as u32 - 1);
+            let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
+            let chunk_last =
+                EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -1175,11 +1178,12 @@ impl WalletSim {
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {
-                    let left_nfs: Vec<Nullifier> = (base..chunk_start.0)
-                        .map(|epoch| self.nf_at(&note, EpochIndex(epoch)))
+                    let left_nfs: Vec<Nullifier> = (base..u32::from(chunk_start))
+                        .map(|epoch| self.nf_at(&note, EpochIndex::new(epoch)))
                         .collect();
-                    let right_nfs: Vec<Nullifier> = (chunk_start.0..=chunk_last.0)
-                        .map(|epoch| self.nf_at(&note, EpochIndex(epoch)))
+                    let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)
+                        ..=u32::from(chunk_last))
+                        .map(|epoch| self.nf_at(&note, EpochIndex::new(epoch)))
                         .collect();
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(
@@ -1270,8 +1274,8 @@ impl WalletSim {
     ) -> Pcd<pool::Unspent> {
         let (_, (epoch_start, _), _, (present_epoch, _), _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch);
-        let elapsed: Vec<Nullifier> = (epoch_start.0..=present_epoch.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
+        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(present_epoch))
+            .map(|epoch| self.nf_at(note, EpochIndex::new(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM
             .fuse(
@@ -1317,8 +1321,8 @@ impl WalletSim {
         target: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
         let (_, (epoch, _), start_anchor) = *spendable.data();
-        let elapsed: Vec<Nullifier> = (epoch.0..=target.0)
-            .map(|index| self.nf_at(note, EpochIndex(index)))
+        let elapsed: Vec<Nullifier> = (u32::from(epoch)..=u32::from(target))
+            .map(|index| self.nf_at(note, EpochIndex::new(index)))
             .collect();
         let unspent = build_unspent_pcd_between_anchors(
             rng,
@@ -1341,8 +1345,12 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd =
-                self.derivation_pcd(rng, note, spend_epoch, EpochIndex(spend_epoch.0 + 1));
+            let range_pcd = self.derivation_pcd(
+                rng,
+                note,
+                spend_epoch,
+                EpochIndex::new(u32::from(spend_epoch) + 1),
+            );
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -1449,7 +1457,8 @@ impl SyncSim {
             &entry.nfs[nfs_from..],
             (entry.cursor_anchor, pool.block(target_height).anchor()),
         );
-        let new_consumed = entry.consumed + (target_height.epoch().0 - entry.next_height.epoch().0);
+        let new_consumed =
+            entry.consumed + u32::from(target_height.epoch() - entry.next_height.epoch());
         self.entries[idx].consumed = new_consumed;
         self.entries[idx].next_height = BlockHeight(target_height.0 + 1);
         self.entries[idx].cursor_anchor = pool.block(target_height).anchor();

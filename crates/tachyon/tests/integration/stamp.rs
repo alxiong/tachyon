@@ -77,7 +77,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let spend_last = EpochIndex(spend_epoch.0 + 1);
+    let spend_last = EpochIndex::new(u32::from(spend_epoch) + 1);
     let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_last);
     let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_last);
 

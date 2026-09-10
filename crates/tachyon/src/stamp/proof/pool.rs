@@ -130,9 +130,9 @@ impl Header for ArbitraryUnspent {
         (
             vec![
                 Fp::from(anchor_prev),
-                Fp::from(u64::from(epoch_start.0)),
+                Fp::from(epoch_start),
                 Fp::from(nf_start),
-                Fp::from(u64::from(epoch_last.0)),
+                Fp::from(epoch_last),
                 Fp::from(nf_last),
                 Fp::from(anchor_last),
             ],
@@ -169,9 +169,9 @@ impl Header for Unspent {
             vec![
                 Fp::from(cm),
                 Fp::from(anchor_prev),
-                Fp::from(u64::from(epoch_start.0)),
+                Fp::from(epoch_start),
                 Fp::from(nf_start),
-                Fp::from(u64::from(epoch_last.0)),
+                Fp::from(epoch_last),
                 Fp::from(nf_last),
                 Fp::from(anchor_last),
             ],

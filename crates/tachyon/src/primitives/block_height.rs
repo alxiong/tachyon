@@ -49,7 +49,7 @@ impl BlockHeight {
     /// Epoch index for this block height.
     #[must_use]
     pub const fn epoch(self) -> EpochIndex {
-        EpochIndex(self.0.div_euclid(EPOCH_SIZE))
+        EpochIndex::new(self.0.div_euclid(EPOCH_SIZE))
     }
 
     /// Whether this is the last block of its epoch.

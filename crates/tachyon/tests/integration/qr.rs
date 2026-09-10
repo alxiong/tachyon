@@ -123,7 +123,7 @@ fn qr_epoch_unspent(
 #[test]
 fn qr_summary_intake_init_starts_a_root_from_a_summary() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 6] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -174,7 +174,7 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
     assert_eq!(
         *stamp_root.pcd.data(),
         (
-            EpochIndex(0),
+            EpochIndex::new(0),
             anchor_prev,
             anchor_last,
             discriminant,
@@ -210,7 +210,13 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), anchor_prev, EpochIndex(3), discriminant, &[]),
+            witness::qr_stamp_intake_seed(
+                ((), ()),
+                anchor_prev,
+                EpochIndex::new(3),
+                discriminant,
+                &[],
+            ),
         )
         .err()
         .unwrap();
@@ -223,7 +229,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
 #[test]
 fn qr_intake_split_partitions_the_contents_by_class() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -299,7 +305,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
 #[test]
 fn qr_intake_split_rejects_a_forged_partition() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 8] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -344,7 +350,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
 #[test]
 fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let exceptional = Tachygram::from(-Fp::from(discriminant));
@@ -405,7 +411,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
 fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
     for depth in [1, 31] {
-        let epoch = EpochIndex(3);
+        let epoch = EpochIndex::new(3);
         let start = Anchor::from(Fp::random(&mut *rng));
         let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
         // Choose x from R_1 and the selected split depth.
@@ -492,7 +498,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
 #[test]
 fn qr_side_descend_carries_each_side_one_level_down() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -561,7 +567,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
 #[test]
 fn qr_side_descend_rejects_a_foreign_sibling() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -619,7 +625,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
 #[test]
 fn qr_side_descend_rejects_a_foreign_interpolant() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -677,7 +683,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
 #[test]
 fn qr_side_descend_rejects_a_foreign_quotient() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -733,7 +739,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
 #[test]
 fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -837,7 +843,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
 #[test]
 fn qr_side_descend_refuses_a_full_register() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let members: [Tachygram; 2] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -910,7 +916,7 @@ fn qr_side_descend_refuses_a_full_register() {
 #[test]
 fn qr_intake_merge_joins_two_spans() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let start = Anchor::from(Fp::random(&mut *rng));
     let left_members: [Tachygram; 5] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -980,7 +986,7 @@ fn qr_intake_merge_joins_two_spans() {
 #[test]
 fn qr_intake_merge_rejects_a_gap() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let left_start = Anchor::from(Fp::random(&mut *rng));
     let right_start = Anchor::from(Fp::random(&mut *rng));
@@ -1039,7 +1045,7 @@ fn qr_intake_merge_rejects_a_gap() {
 #[test]
 fn qr_intake_merge_rejects_different_profiles() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let start = Anchor::from(Fp::random(&mut *rng));
     let left_members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -1433,7 +1439,7 @@ fn qr_bucket_seal_accepts_a_short_span_at_its_own_tick() {
     let (_, _, anchor_last, discriminant, ..) = *intake.pcd.data();
     assert_eq!(
         discriminant,
-        QrDiscriminant::from(anchor_last.next_epoch(EpochIndex(1)).unwrap())
+        QrDiscriminant::from(anchor_last.next_epoch(EpochIndex::new(1)).unwrap())
     );
 
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
@@ -1506,7 +1512,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
 #[test]
 fn qr_unspent_segments_of_consecutive_epochs_fuse_over_a_boundary_link() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     // Fill epoch zero and open epoch one, one stamp per block.
@@ -1599,7 +1605,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
@@ -1656,7 +1662,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     );
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
-    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex(epoch2.0 + 1));
+    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex::new(u32::from(epoch2) + 1));
     let (bind, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1675,7 +1681,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         (present_nf, nf_next),
         (
             user.nf_at(&note, epoch2),
-            user.nf_at(&note, EpochIndex(epoch2.0 + 1))
+            user.nf_at(&note, EpochIndex::new(u32::from(epoch2) + 1))
         )
     );
 }
@@ -1688,7 +1694,7 @@ fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
     let rng = &mut StdRng::seed_from_u64(196);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch = EpochIndex(0);
+    let epoch = EpochIndex::new(0);
     let nf = user.nf_at(&note, epoch);
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     let short_anchor = pool.anchor();
@@ -1775,7 +1781,7 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     // The note's cm is published nowhere in this pool.
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
@@ -1817,7 +1823,7 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
 
@@ -1868,7 +1874,7 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
@@ -1921,7 +1927,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let epoch0 = EpochIndex(0);
+    let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
@@ -2427,7 +2433,7 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
 #[test]
 fn qr_intake_merge_rejects_different_discriminants() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let left_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
     let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -2478,7 +2484,7 @@ fn qr_intake_merge_rejects_different_discriminants() {
 #[test]
 fn qr_intake_merge_rejects_different_epochs() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let start = Anchor::from(Fp::random(&mut *rng));
     let left_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -2532,7 +2538,7 @@ fn qr_intake_merge_rejects_different_epochs() {
 #[test]
 fn qr_partition_routes_consecutive_values_by_profile() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let anchor_prev = Anchor::from(Fp::random(&mut *rng));
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let base = Fp::random(&mut *rng);

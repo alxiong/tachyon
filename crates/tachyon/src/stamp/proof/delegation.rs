@@ -183,22 +183,23 @@ impl Step for NfDerive {
             reason = "the group width is a small constant"
         )]
         enforce_zero(
-            Fp::from(u64::from(epoch_start.0) % (PoseidonFp::RATE as u64)),
+            Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
             "NfDerive: epoch_start is not group-aligned",
         )?;
 
         // The whole window must land inside the epoch range: an index past
-        // EPOCH_MAX maps to no block height, so it labels nothing.
+        // EPOCH_MAX maps to no block height, so it labels nothing. Unreachable
+        // through `EpochIndex`, which cannot hold such an index; a real
+        // circuit sees a raw field element and needs the check.
         #[expect(
             clippy::as_conversions,
             clippy::cast_possible_truncation,
             reason = "the window width is a small constant"
         )]
-        let epoch_last = epoch_start
-            .0
+        let epoch_last = u32::from(epoch_start)
             .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
             .filter(|last| *last <= EPOCH_MAX)
-            .map(EpochIndex)
+            .map(EpochIndex::new)
             .ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
             })?;

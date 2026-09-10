@@ -1,6 +1,6 @@
 use core::ops;
 
-use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
 use pasta_curves::Fp;
 
 use super::BlockHeight;
@@ -14,15 +14,29 @@ use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
 /// Indexes nullifier derivation: $mk = \text{KDF}(\psi, nk)$, then
 /// $nf_e = F_{mk}(e)$. Different epochs produce different nullifiers for
 /// the same note, enabling range-restricted delegation via the GGM tree PRF.
-#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
-pub struct EpochIndex(pub u32);
+///
+/// Always in `0..=EPOCH_MAX`: every index maps to a block height in the
+/// protocol's range.
+#[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+pub struct EpochIndex(u32);
 
 /// A non-negative distance between two [`EpochIndex`]es, from subtraction.
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
-#[into(u64)]
+#[into(u32, u64)]
 pub struct EpochDiff(u32);
 
 impl EpochIndex {
+    /// The epoch at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Above [`EPOCH_MAX`], which maps to no block height.
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        assert!(index <= EPOCH_MAX, "epoch index above EPOCH_MAX");
+        Self(index)
+    }
+
     /// Returns the next epoch index, or `None` for the final epoch.
     ///
     /// Indexes past [`EPOCH_MAX`] map to no block height in the protocol's
@@ -92,6 +106,13 @@ mod tests {
     fn epoch_difference_rejects_reversed_operands() {
         let reversed = EpochIndex(3) - EpochIndex(7);
         panic!("reversed operands must not produce a difference, got {reversed:?}");
+    }
+
+    #[test]
+    #[should_panic(expected = "epoch index above EPOCH_MAX")]
+    fn new_rejects_an_index_past_the_final_epoch() {
+        let past_the_end = EpochIndex::new(EPOCH_MAX + 1);
+        panic!("an index above EPOCH_MAX is not an epoch, got {past_the_end:?}");
     }
 
     #[test]

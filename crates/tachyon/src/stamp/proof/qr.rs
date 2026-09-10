@@ -69,7 +69,7 @@ impl Header for QrIntake {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
         (
             vec![
-                Fp::from(u64::from(epoch.0)),
+                Fp::from(epoch),
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(discriminant),
@@ -108,7 +108,7 @@ impl Header for QrIntakeSides {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, residue, non_residue) = *data;
         (
             vec![
-                Fp::from(u64::from(epoch.0)),
+                Fp::from(epoch),
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(discriminant),
@@ -243,7 +243,7 @@ impl Step for QrIntakeMerge {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(u64::from(epoch.0)) - Fp::from(u64::from(right_epoch.0)),
+            Fp::from(epoch) - Fp::from(right_epoch),
             "QrIntakeMerge: inputs cover different epochs",
         )?;
         enforce_zero(
@@ -497,7 +497,7 @@ impl Header for QrBucket {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
         (
             vec![
-                Fp::from(u64::from(epoch.0)),
+                Fp::from(epoch),
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(discriminant),
@@ -561,12 +561,12 @@ impl Step for QrBucketSeal {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(anchor_prev)
-                - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(u64::from(epoch.0))),
+                - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(epoch)),
             "QrBucketSeal: intake does not begin at the epoch boundary",
         )?;
         // Computed in the widened domain: a bucket sealed at the final epoch
         // has a closing tick even though that epoch has no successor.
-        let closing_tick = Fp::from(u64::from(epoch.0) + 1);
+        let closing_tick = Fp::from(epoch) + Fp::ONE;
         enforce_zero(
             Fp::from(discriminant)
                 - poseidon::anchor_next_epoch(Fp::from(anchor_last), closing_tick),
