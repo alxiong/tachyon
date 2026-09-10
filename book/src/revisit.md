@@ -1495,24 +1495,24 @@ and consensus performs the same canonical-anchor check.
 
 ### Proof Tree {#prooftree}
 
-We now decompose the three statements into the proof tree. Each node is a
-**step**: a bounded circuit that takes up to two child PCD proofs plus some
-private witness, checks part of the statement, and emits a fresh PCD proof. A
-step's output is its **header** (the "data" of proof-carrying data), the public
-input that captures the computation so far. Headers flow upward, from children
-to parents. A parent, besides proving its part of the sub-statement, **bridges**
+We now decompose the Output, Spend, and bundle-level statements into proof trees.
+Each node is a **step**: a bounded circuit that takes up to two child PCD proofs
+plus some private witness, checks part of its statement, and emits a fresh PCD
+proof. A step's output is its **header** (the "data" of proof-carrying data), the
+public input that captures the computation so far. Headers flow upward, from
+children to parents. A parent, besides proving its part of the sub-statement, **bridges**
 two children by loading both headers and equality-checking the fields they must
 agree on (e.g. the same $\cm$ field to ensure they are proving consistently
-against the same underlying note). Sufficient bridging checks make the
-decomposition of monolithic statement into a tree of sub-statement sound.
+against the same underlying note). Sufficient bridging checks make each
+decomposition into a tree of sub-statements sound.
 
 > Notation: we will use different font families for steps and headers:
 > $\mathsf{MyStep}(\mathtt{Left}, \mathtt{Right})$. Fields in a header are
-> wrapped in curly bracket: $\mathtt{left}\{e, \cm\}$ with dot accessor
+> wrapped in braces: $\mathtt{left}\{e, \cm\}$ with dot accessor
 > $\mathtt{left}.\cm$.
 >
 > Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge"
-> and the noun usually is a header name; whereas headers use "adj + noun"
+> and the noun is usually a header name, whereas headers use "adj + noun"
 > like "Spendable, Unspent, VerifiedUnspent".
 >
 > Color: User scope is blue ($\Uc$), OSS scope is red ($\Oc$), and shared
@@ -1526,11 +1526,11 @@ after the OSS proof returns.
 
 #### Shared Evidence: Anchor Chains and QR Buckets {#shared-headers}
 
-Two different shared structures remove repeated chain work. Ordinary
-$\mathtt{AnchorChain}$ evidence advances stamps within the active epoch.
-Closed-epoch $\mathtt{QrBucket}$ evidence authenticates all tachygrams of one
-past epoch and supports one-bucket membership and non-membership queries. Anchor
-chains do not use QR routing.
+Shared evidence has two final forms. Ordinary $\mathtt{AnchorChain}$ evidence
+advances stamps within the active epoch. Closed-epoch $\mathtt{QrBucket}$
+evidence authenticates all tachygrams of one past epoch and supports one-bucket
+membership and non-membership queries. $\mathtt{Summary}$ is an intermediate
+shared header used to construct QR buckets; anchor chains do not use QR routing.
 
 **Active anchor chains.** An anchor-chain header is simply
 
@@ -1638,11 +1638,21 @@ $$
 p(r)\iseq q_0(r)\cdot q_1(r),\qquad q_0(-R_j)\neq0.
 $$
 
-It emits a $\mathtt{QrIntakeSides}$ header carrying both commitments. Two
-independent $\mathsf{QrSideDescend}$ calls may then return either side as a new
-$\mathtt{QrIntake}$. A descend returning $q_1$ checks that its sibling $q_0$ is
-entirely $\NQR_{R_j}$; one returning $q_0$ checks that $q_1$ is entirely
-$\QR_{R_j}$. It requires $j<32$ and appends the chosen bit,
+Relative to the four [QR decomposition](#partition) substatements,
+$\mathsf{QrIntakeSplit}$ enforces **decomposition** through the product identity
+and **zero-value assignment** through the nonzero opening at $-R_j$. It emits a
+$\mathtt{QrIntakeSides}$ header carrying both commitments.
+
+Each $\mathsf{QrSideDescend}$ invocation returns one side as a new
+$\mathtt{QrIntake}$ while checking the purity of its sibling:
+
+- returning the QR side $q_1$ enforces **NQR purity** of $q_0$, proving that
+  $q_1$ contains every QR root of the parent; and
+- returning the NQR side $q_0$ enforces **QR purity** of $q_1$, proving that
+  $q_0$ contains every NQR root of the parent.
+
+To realize one routing round, $\mathsf{QrSideDescend}$ is invoked once for each
+side of every split. Each invocation requires $j<32$ and appends its chosen bit,
 
 $$
 j'=j+1,\qquad b'=2b+\mathsf{bit},\qquad R_{j+1}=R_j+1.
@@ -1653,25 +1663,30 @@ the product relation leaves nowhere else for a matching input root to go. The
 returned child need not itself be pure; an opposite-class extra root only makes
 a non-membership opening harder to satisfy. Creation membership is also safe,
 because splitting and merging never add roots and a zero opening does not depend
-on the bucket's class label. Running both descents yields the exact mathematical
-[QR decomposition](#partition). Thus one split followed by its two side descents
-realizes one abstract decomposition. Applying it independently to all $m$
-routing buckets produces the round's $2m$ unmerged children.
+on the bucket's class label. Across the pair of descents, both purity
+substatements are checked, so an honestly materialized pair satisfies all four
+decomposition substatements. The two child proofs are not recombined, however:
+each child individually carries the split checks and its sibling's purity check,
+which proves completeness but not its own purity. This weaker per-branch claim is
+sufficient for the membership and non-membership queries below. Applying the
+construction independently to all $m$ routing buckets produces the round's $2m$
+unmerged children.
 
 $\mathsf{QrIntakeMerge}$ joins two intakes only when they have the same epoch,
-boundary, profile, and next discriminant, their anchor ranges are contiguous,
-and the product fits the PCS degree limit. It fixes both input polynomials and
-their product before checking
+ending sentinel, profile, and next discriminant, their anchor ranges are
+contiguous, and the product fits the PCS degree limit. It fixes both input
+polynomials and their product before checking
 
 $$
 q_M(r)\iseq q_L(r)\cdot q_R(r).
 $$
 
-Repeated binary merges realize each contiguous block product
-$Q_{c,\ell}$. Where another merge would exceed the degree limit, neighboring
-pieces remain separate outputs of the round. Thus the split-descend steps and a
-chosen sequence of merges realize the abstract round's variable output arity
-without requiring a variable-arity proof step.
+Merge enforces none of the four decomposition substatements anew. Instead,
+repeated binary merges combine each contiguous block of same-profile outputs
+while preserving their completeness, root provenance, and range coverage. Where
+another merge would exceed the degree limit, neighboring pieces remain separate
+outputs of the round. Thus split, descend, and merge realize the abstract round's
+variable output arity without requiring a variable-arity proof step.
 
 If all pieces of one profile merge into a single full-epoch intake, it can be
 sealed. Otherwise its remaining pieces enter another abstract decompose-merge
@@ -1686,7 +1701,7 @@ $$
   \mathsf{Com}(q_b(X))\}.
 $$
 
-The following diagram starts from a completed summary and collects the
+The following diagram collects all three intake paths and the subsequent
 closed-epoch QR routing flow. Every header is shared, while every step is run by
 an OSS. The two side branches show separate instances of the same descend,
 merge, and seal steps.
@@ -1719,8 +1734,8 @@ flowchart TB
   merged1["$$\mathtt{QrIntake}\\ \text{merged }\QR\text{ range}$$"]:::s
   Seal0(["$$\mathsf{QrBucketSeal}$$"]):::o
   Seal1(["$$\mathsf{QrBucketSeal}$$"]):::o
-  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b,R_{j+1},\mathsf{Com}(Q_{2b})\}$$"]:::s
-  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b+1,R_{j+1},\mathsf{Com}(Q_{2b+1})\}$$"]:::s
+  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b,R_{j+1},\mathsf{Com}(q_{2b})\}$$"]:::s
+  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b+1,R_{j+1},\mathsf{Com}(q_{2b+1})\}$$"]:::s
 
   summary --> QrSummaryIntakeInit --> root
   QrStampIntakeSeed --> root
@@ -1734,10 +1749,11 @@ flowchart TB
   peer1 --> Merge1 --> merged1 -->|full epoch| Seal1 --> bucket1
 ```
 
-Final profiles may have different depths. A query checks at most 32 profile bits,
-derives through $R_j$, and matches $(e,\sntl_{e+1},j,b,R_j)$ against the bucket
-in one step. Every non-residue bit also requires $x+R_i\neq0$. The same step
-opens $q_b$ at $x$ for zero or nonzero.
+Final profiles may have different depths. A consuming step verifies that the
+first $j$ QR classifications of $x$ encode $b$, checks that $R_j$ is the next
+discriminant derived from $\sntl_{e+1}$, and matches the remaining bucket
+metadata. Every non-residue profile bit also requires $x+R_i\neq0$. The step then
+opens $q_b$ at $x$ for membership or non-membership.
 
 The diagram below summarizes the active anchor-chain and closed-epoch QR
 headers. $\mathtt{AnchorChain}$ may end at the active tip;
@@ -1751,9 +1767,9 @@ $\mathtt{QrBucket}$ is available only for complete past epochs.
 
 #### Same-epoch Spend {#same-epoch-spend}
 
-We start with the simplest case: when user spend a note that's created in the
-same epoch (namely $e = e_\incl$). For same-epoch spend, no past exclusion
-condition is required, obviating any OSS assistance.
+We start with the simplest case: a user spends a note created in the same epoch
+($e=e_\incl$). No past exclusion is required, so the spend needs no OSS
+assistance.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 15, "padding": 5}}}%%
@@ -1785,17 +1801,17 @@ flowchart TB
   StampLift --> stampprime
 ```
 
-Each spend or output leaf emits a $\mathtt{Stamp}$ header whose $\actacc$
-commits to the single root $\mathsf{Poseidon}(\rk,\cv)$ and whose $\tgacc$
-commits to that action's two tachygrams. $\mathsf{StampMerge}$ multiplies both
-input multiset polynomials and emits their two commitments.
+Each completed spend or output branch emits a $\mathtt{Stamp}$ header whose
+$\actacc$ commits to the single root $\mathsf{Poseidon}(\rk,\cv)$ and whose
+$\tgacc$ commits to that action's two tachygrams. $\mathsf{StampMerge}$
+multiplies both input multiset polynomials and emits their two commitments.
 
 $\mathtt{Spendable}$ always means, relative to its carried anchor lineage, that
 its $\cm$ is included and every required past nullifier is excluded before its
 epoch; $\cm$ is not checked against a note opening until $\mathsf{SpendBind}$.
 $\mathsf{SpendableInit}$ takes the creation stamp data as private witness, proves
-$\cm$ occurs in its output data and is a root of its accumulator, and computes
-the stamp's resulting anchor from that same accumulator. The later
+$\cm$ occurs among that stamp's tachygrams and is a root of its accumulator, then
+computes the stamp's resulting anchor from that same accumulator. The later
 $\mathsf{StampLift}$ connects this seed-rooted lineage through
 $\mathtt{AnchorChain}$ evidence to a target checked against canonical history. A
 same-epoch spend requires no past exclusion because the note did not exist before
@@ -1807,13 +1823,13 @@ $\mathtt{AnchorChain}.\anchor_R$. The chain contains only authenticated stamp
 transitions and admits no sentinel transition, so the lift remains within the
 same spending epoch. Sufficient lift is needed to obfuscate the inclusion block
 for [spend unlinkability](#nf-sec).
-$\mathsf{SpendBind}$ accepts only an aligned header with
-$e=\mathsf{Epoch}(\anchor)$.
+$\mathsf{SpendBind}$ requires the target anchor and carried spending epoch to
+remain aligned. Consensus later checks that the target anchor occurs in
+canonical history in that epoch.
 
 Users may cache the $\mathtt{Spendable}$ immediately after note inclusion and
 send it to a hardware wallet for spend-time signing in parallel with
 $\mathsf{SpendBind}$ and the later steps.
-
 
 To map back to the [monolithic action statement](#statement), our steps cover
 these sub-statements respectively:
@@ -1833,9 +1849,9 @@ these sub-statements respectively:
 When a wallet comes back online, it may rebuild or refresh spendability proofs
 for all its unspent notes. Once a note's inclusion epoch $e_\incl$ is in the
 past, spending it requires proving exclusion across every intervening epoch.
-The inclusion branch and exclusion branch remain independent. A
-$\mathtt{QrBucket}$ selected by $\cm$'s profile proves that $\cm$ occurred in
-epoch $e_\incl$. Separately, the user-owned
+The inclusion branch and exclusion branch remain independent. A membership
+opening against the $\mathtt{QrBucket}$ selected by $\cm$'s profile proves that
+$\cm$ occurred in epoch $e_\incl$. Separately, the user-owned
 $\mathsf{VerifiedUnspentInit}$ consumes only the $\mathtt{QrBucket}$ selected by
 $\nf_{e_\incl}$'s profile. It privately witnesses the note opening and
 $(\ak,\nk)$, then enforces
@@ -1953,14 +1969,15 @@ $$
 
 where $g_{s_L,s_R}$ contains one indexed factor for every epoch in $[s_L,s_R)$.
 $\mathsf{UnspentSeed}$ creates the empty range $[s_L,s_L)$ with
-$g_{s_L,s_L}(X)=1$. This seed cannot be bound into a spendable proof until at least
-one epoch is appended. Each $\mathsf{UnspentLift}$:
+$g_{s_L,s_L}(X)=1$. This seed cannot be bound into a spendable proof until at
+least one epoch is appended. Each $\mathsf{UnspentLift}$:
 
 - requires its current right sentinel to equal the input $\mathtt{QrBucket}$'s
   left sentinel;
 - requires that bucket to cover the next epoch $i=s_R$;
-- derives $\nf_{s_R}$'s complete QR profile, matches the bucket's $(j,b,R_j)$,
-  and proves $q_b(\nf_{s_R})\neq0$ in the same query step; and
+- takes the opaque $\nf_{s_R}$ as witness, derives its complete QR profile,
+  matches the bucket's $(j,b,R_j)$, and proves
+  $q_b(\nf_{s_R})\neq0$ in the same query step; and
 - appends the [indexed factor $F_{s_R,\nf_{s_R}}(X)$](#nf-flow), fixing the old
   and new commitments before the oracle challenge and enforcing
   $$
@@ -2000,7 +2017,7 @@ the reinitialized spendable ends. $\mathsf{SpendBind}$ then
 recomputes the note relation, derives
 $(\nf_e,\nf_{e+1})$ for that epoch, and performs the same value and authority
 checks as in the [same-epoch case](#same-epoch-spend), emitting
-$\mathtt{SpendStamp}$. Output construction, stamp merging, and any final
+$\mathtt{Stamp}$. Output construction, stamp merging, and any final
 in-epoch stamp lift are unchanged and therefore omitted from the diagram.
 
 #### Delegation Extension and Multiple OSSs {#extend-range}
@@ -2024,7 +2041,7 @@ B&=\mathtt{Unspent}\{s_M,s_R,\sntl_{s_M},\sntl_{s_R},
 $$
 
 It requires $s_L<s_M<s_R$ and equality between $A$'s ending sentinel and $B$'s
-starting sentinel. These checks establish order and exclude gaps or overlap. It
+starting sentinel. These checks establish order and exclude gaps or overlaps. It
 then emits
 
 $$
@@ -2034,11 +2051,10 @@ $$
 
 setting $g_{s_L,s_R}=g_{s_L,s_M}\cdot g_{s_M,s_R}$ and proving the product
 identity at a random point after all three commitments are fixed. Although
-polynomial
-multiplication is commutative, the endpoint checks make the merged historical
-range ordered. Repeated merges can combine any number of adjacent post-bootstrap
-OSS results before the wallet binds them to its note. They do not absorb the
-separate inclusion-epoch singleton.
+polynomial multiplication is commutative, the endpoint checks make the merged
+historical range ordered. Repeated merges can combine any number of adjacent
+post-bootstrap OSS results before the wallet binds them to its note. They do not
+absorb the separate inclusion-epoch singleton.
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 20, "padding": 5}}}%%
