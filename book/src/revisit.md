@@ -899,10 +899,11 @@ Epoch-wide non-membership therefore reduces to one accumulator opening against
 that bucket.
 
 To construct the profile buckets within the polynomial degree bound, first
-collect the epoch into bounded, unclassified root buckets. Routing repeatedly
-decomposes each bucket under the next QR discriminant and merges adjacent
-buckets assigned the same resulting profile whenever their union remains within
-capacity.
+collect the epoch into bounded, unclassified root buckets. An OSS can route
+these buckets as they arrive under its privately chosen discriminants. Routing
+repeatedly decomposes each bucket under the next discriminant and merges
+adjacent buckets assigned the same resulting profile whenever their union
+remains within capacity.
 Once all buckets for one profile merge into a single bounded bucket covering the
 full epoch, that bucket is final; otherwise those buckets continue through
 another routing round. QR discriminants make each decomposition cheap to prove
@@ -1129,20 +1130,23 @@ the epoch's tachygrams.
 </p>
 
 <a id="qr-discriminants">**QR Discriminant Choice.**</a>
-The discriminants must remain unpredictable while the epoch's tachygrams are
-chosen.
-Use the ending sentinel as the first discriminant, then increment sequentially:
+The discriminants must remain unpredictable to users while the epoch's
+tachygrams are chosen; otherwise a user could grind commitments to overload a
+chosen bucket. Each OSS privately samples its own $R_0$ and increments
+sequentially:
 
 $$
-R_0=\sntl_{e+1},\qquad R_{j+1}=R_j+1.
+R_{j+1}=R_j+1.
 $$
 
-Root buckets may be built while the epoch is active because they apply no
-discriminant, but routing begins only after $\sntl_{e+1}$ fixes $R_0$. This
-assumes the chain entropy is sufficiently hard to bias. Consecutive
-discriminants are not statistically independent, but their QR classes have
-*negligible correlation* and retain an almost-uniform profile
-partition.[^qr-correlation]
+The OSS keeps $R_0$ private until the epoch closes, allowing it to build its
+routing network *in flight* without exposing a grinding target. Discriminant
+choice affects balance, not soundness: decomposition proofs certify the output
+buckets for any choice. Consumers may use any valid routing network, so a
+biased or prematurely revealed network can simply be ignored in favor of an
+honest OSS's routing network. Consecutive discriminants are not statistically
+independent, but their QR classes have *negligible correlation* and retain an
+almost-uniform profile partition.[^qr-correlation]
 
 [^qr-correlation]: Writing $\chi$ for the quadratic character, distinct
     translates satisfy
@@ -1152,11 +1156,12 @@ partition.[^qr-correlation]
     fixed input uniformly, expected bucket loads are correspondingly balanced;
     for $k=32$ in the protocol field, the relative deviation is negligible.
 
-**Queries and cost.** A service publishes all full-epoch final buckets and their
-proofs. To query $\tg$, a consumer derives successive discriminants and
-profile bits until they select a final profile. It then tests $q_\v{b}(\tg)=0$ for
-membership or $q_\v{b}(\tg)\neq 0$ for non-membership against that one bucket.
-Routing processes a tachygram once per depth it traverses; this one-time work is
+**Queries and cost.** After the epoch closes, a service reveals $R_0$ and
+publishes all full-epoch final buckets and their proofs. To query $\tg$, a
+consumer derives successive discriminants and profile bits until they select a
+final profile. It then tests $q_\v{b}(\tg)=0$ for membership or
+$q_\v{b}(\tg)\neq 0$ for non-membership against that one bucket. Routing
+processes a tachygram once per depth it traverses; this one-time work is
 amortized across later queries.
 
 A 32-bit profile is sufficient for our intended scale. Even at $50K$
@@ -1594,20 +1599,21 @@ flowchart LR
   SummarySeed --> summary0 --> SummaryAdvance --> summary1
 ```
 
-**Closed-epoch QR routing.** After $\sntl_{e+1}$ closes the epoch,
-$\mathsf{QrSummaryIntakeInit}$ turns each summary into
+**Streaming QR routing.** During epoch $e$, an OSS privately samples $R_0$ and
+$\mathsf{QrSummaryIntakeInit}$ turns each completed summary into
 
 $$
 \mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{last},
-  \sntl_{e+1},j,b,R_j,\mathsf{Com}(q_b(X))\}.
+  j,b,R_j,\mathsf{Com}(q_b(X))\}.
 $$
 
 Here $j$ is the routing depth, and $b$ is the integer encoding of the $j$ QR
 profile bits encountered so far, with NQR encoded as $0$ and QR as $1$.
 Appending a side bit updates $b$ to $2b+\mathsf{bit}$; $R_j$ is the next
-discriminant.
+discriminant. The OSS keeps these routing headers unpublished until the epoch
+closes, so they do not reveal $R_0$ while users can still choose tachygrams.
 
-The root profile has $(j,b)=(0,0)$ and $R_0=\sntl_{e+1}$. A stamp not yet
+The root profile has $(j,b)=(0,0)$ and the OSS's chosen $R_0$. A stamp not yet
 included in a summary can enter through $\mathsf{QrStampIntakeSeed}$. This has
 the same root shape and binds its one stamp transition directly.
 $\mathsf{QrSummaryIntakeInit}$ equality-constrains $(e,\anchor_\mathsf{prev},
@@ -1619,7 +1625,7 @@ transition.
 For an empty epoch, $\mathsf{QrEmptyIntakeSeed}$ emits the root intake
 
 $$
-\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,\sntl_{e+1},0,0,R_0,
+\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,0,0,R_0,
   \mathsf{Com}(1)\}.
 $$
 
@@ -1673,8 +1679,8 @@ construction independently to all $m$ routing buckets produces the round's $2m$
 unmerged children.
 
 $\mathsf{QrIntakeMerge}$ joins two intakes only when they have the same epoch,
-ending sentinel, profile, and next discriminant, their anchor ranges are
-contiguous, and the product fits the PCS degree limit. It fixes both input
+profile, and next discriminant, their anchor ranges are contiguous, and the
+product fits the PCS degree limit. It fixes both input
 polynomials and their product before checking
 
 $$
@@ -1688,9 +1694,9 @@ another merge would exceed the degree limit, neighboring pieces remain separate
 outputs of the round. Thus split, descend, and merge realize the abstract round's
 variable output arity without requiring a variable-arity proof step.
 
-If all pieces of one profile merge into a single full-epoch intake, it can be
-sealed. Otherwise its remaining pieces enter another abstract decompose-merge
-round, realized by the same fixed-arity steps under the next discriminant.
+Routing and merging proceed as summaries arrive. Once the epoch closes, any
+profile represented by a single full-epoch intake can be sealed; remaining
+pieces continue through further decompose-merge rounds.
 $\mathsf{QrBucketSeal}$ verifies that the intake
 begins at $\sntl_e$ and that applying the closing sentinel transition to its
 terminal stamp anchor yields $\sntl_{e+1}$, and requires $j\leq32$. It emits the
@@ -1716,7 +1722,7 @@ flowchart TB
   QrSummaryIntakeInit(["$$\mathsf{QrSummaryIntakeInit}$$"]):::o
   QrStampIntakeSeed(["$$\mathsf{QrStampIntakeSeed}$$"]):::o
   QrEmptyIntakeSeed(["$$\mathsf{QrEmptyIntakeSeed}$$"]):::o
-  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,\sntl_{e+1},0,0,R_0,\mathsf{Com}(p)\}$$"]:::s
+  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,0,0,R_0,\mathsf{Com}(p)\}$$"]:::s
 
   QrIntakeSplit(["$$\mathsf{QrIntakeSplit}$$"]):::o
   sides["$$\mathtt{QrIntakeSides}\\ \{\ldots,\mathsf{Com}(q_0),\mathsf{Com}(q_1)\}$$"]:::s
@@ -1751,9 +1757,10 @@ flowchart TB
 
 Final profiles may have different depths. A consuming step verifies that the
 first $j$ QR classifications of $x$ encode $b$, checks that $R_j$ is the next
-discriminant derived from $\sntl_{e+1}$, and matches the remaining bucket
-metadata. Every non-residue profile bit also requires $x+R_i\neq0$. The step then
-opens $q_b$ at $x$ for membership or non-membership.
+discriminant derived from the network's revealed $R_0$, and matches the
+remaining bucket metadata. Every non-residue profile bit also requires
+$x+R_i\neq0$. The step then opens $q_b$ at $x$ for membership or
+non-membership.
 
 The diagram below summarizes the active anchor-chain and closed-epoch QR
 headers. $\mathtt{AnchorChain}$ may end at the active tip;
