@@ -1656,7 +1656,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     );
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
-    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex(epoch2.0 + 2));
+    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex(epoch2.0 + 1));
     let (bind, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1745,7 +1745,7 @@ fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
         "the suffix covers only the same epoch, without a boundary crossing"
     );
     let lifted = user.lift(rng, spendable, suffix, &note);
-    let derived = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap().next().unwrap());
+    let derived = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
     let (bind, ()) = PROOF_SYSTEM
         .fuse(
             rng,

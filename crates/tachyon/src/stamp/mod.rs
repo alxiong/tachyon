@@ -400,8 +400,8 @@ impl Plan {
             // note's master key (the succinct header carries only the
             // commitment); the witness segments its read and complement.
             let mk = pak.nk.derive_note_private(note.psi);
-            let (_, deriv_start, _, deriv_end) = *range_pcd.data();
-            let window: Vec<Nullifier> = (deriv_start.0..deriv_end.0)
+            let (_, deriv_start, _, deriv_last) = *range_pcd.data();
+            let window: Vec<Nullifier> = (deriv_start.0..=deriv_last.0)
                 .map(|epoch| mk.derive_nullifier(EpochIndex(epoch)))
                 .collect();
             let bind_witness =

@@ -11,6 +11,7 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
+use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 use ragu_arithmetic::PoseidonPermutation as _;
@@ -18,8 +19,10 @@ use ragu_pasta::PoseidonFp;
 
 use crate::{
     collections::indexed_multiset,
+    constants::EPOCH_MAX,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
+    nullifier::NF_DERIVATION_WIDTH,
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -48,8 +51,8 @@ impl Header for NfMasterHeader {
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
-/// `[epoch_start, epoch_end)`; `nf_commit` commits the range's nullifier
+/// `(cm, epoch_start, nf_commit, epoch_last)`: covers epochs
+/// `[epoch_start, epoch_last]`; `nf_commit` commits the range's nullifier
 /// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
 /// invariant is established at [`NfDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
@@ -66,15 +69,15 @@ impl Header for NfMasterHeader {
 pub struct NullifierDerivation;
 
 impl Header for NullifierDerivation {
-    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is exclusive.
+    /// `(cm, epoch_start, nf_commit, epoch_last)`. `epoch_last` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, epoch_start, nf_commit, epoch_end) = *data;
+        let (cm, epoch_start, nf_commit, epoch_last) = *data;
         (
-            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
+            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_last)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(nf_commit)],
@@ -184,15 +187,24 @@ impl Step for NfDerive {
             "NfDerive: epoch_start is not group-aligned",
         )?;
 
-        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
-        let nullifiers = mk.derive_window(epoch_start);
-
+        // The whole window must land inside the epoch range: an index past
+        // EPOCH_MAX maps to no block height, so it labels nothing.
         #[expect(
             clippy::as_conversions,
             clippy::cast_possible_truncation,
-            reason = "constant length"
+            reason = "the window width is a small constant"
         )]
-        let epoch_end = EpochIndex(epoch_start.0 + nullifiers.len() as u32);
+        let epoch_last = epoch_start
+            .0
+            .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
+            .filter(|last| *last <= EPOCH_MAX)
+            .map(EpochIndex)
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
+            })?;
+
+        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
+        let nullifiers = mk.derive_window(epoch_start);
 
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
@@ -211,14 +223,14 @@ impl Step for NfDerive {
             "NfDerive: sequence does not match the derived window",
         )?;
 
-        Ok(((cm, epoch_start, seq.commit(), epoch_end), ()))
+        Ok(((cm, epoch_start, seq.commit(), epoch_last), ()))
     }
 }
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_end`). Witnesses the two range polynomials and their
+/// left.epoch_last + 1`). Witnesses the two range polynomials and their
 /// concatenation, binds each by commit-equality, and proves the concat as the
 /// product
 ///
@@ -231,7 +243,7 @@ impl Step for NfDerive {
 /// All three operands are committed and absorbed into the challenge, so the
 /// product identity pins `merged`'s member multiset to the union of the
 /// halves'. The contiguity check preserves the header invariant established
-/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end)`,
+/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_last]`,
 /// so the announced range labels the member multiset truthfully.
 #[derive(Debug)]
 pub struct NullifierFuse;
@@ -250,15 +262,15 @@ impl Step for NullifierFuse {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (left_seq, merged_seq, right_seq): Self::Witness<'source>,
-        (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
-        (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
+        (left_cm, left_epoch_start, left_nf_commit, left_epoch_last): <Self::Left as Header>::Data,
+        (right_cm, right_epoch_start, right_nf_commit, right_epoch_last): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_last) - Fp::ONE,
             "NullifierFuse: ranges not contiguous",
         )?;
         enforce_equal_point(
@@ -280,7 +292,12 @@ impl Step for NullifierFuse {
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         Ok((
-            (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
+            (
+                left_cm,
+                left_epoch_start,
+                merged_nf_commit,
+                right_epoch_last,
+            ),
             (),
         ))
     }

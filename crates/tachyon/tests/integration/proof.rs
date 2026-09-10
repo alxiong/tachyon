@@ -57,7 +57,7 @@ fn honest_spend_bind(
     spendable: Pcd<spendable::SpendableHeader>,
     spend_epoch: EpochIndex,
 ) -> Pcd<spend::SpendHeader> {
-    let derived = user.derivation_pcd(rng, *note, spend_epoch, EpochIndex(spend_epoch.0 + 2));
+    let derived = user.derivation_pcd(rng, *note, spend_epoch, EpochIndex(spend_epoch.0 + 1));
     let witness = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(note, &derived),
@@ -148,7 +148,7 @@ fn spendable_init_rejects_tg_absent() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let absent_tg = Tachygram::from(Fp::random(&mut *rng));
 
     let err = PROOF_SYSTEM
@@ -1394,7 +1394,7 @@ fn unspent_bind_rejects_tip_mismatch() {
     // final member, so the poly bind passes; the divisibility read then
     // finds no such member in the genuine sequence and rejects it.
     let (_, _, _, (unspent_last, _), _) = *unspent.data();
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), unspent_last.next().unwrap());
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), unspent_last);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -1464,7 +1464,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         &[user.nf_at(&note, EpochIndex(0))],
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let (_honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -1510,7 +1510,7 @@ fn unspent_bind_rejects_uncovered_start() {
     // later window) cannot cover it.
     // The builder would segment out of range, so the witness is assembled
     // by hand: the genuine covering sequence, an empty complement.
-    let range = user.derivation_pcd(rng, note, EpochIndex(64), EpochIndex(65));
+    let range = user.derivation_pcd(rng, note, EpochIndex(64), EpochIndex(64));
     let window = user.covering_window(&note, &range);
     let witness = (
         NfSeqPoly::new(EpochIndex(0), &[user.nf_at(&note, EpochIndex(0))]),
@@ -1556,7 +1556,7 @@ fn unspent_bind_rejects_uncovered_end() {
         )
         .expect("EndEpochUnspentSeed");
 
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let window = user.covering_window(&note, &range);
     // The builder would segment out of range, so the witness is assembled
     // by hand: the genuine elapsed and covering sequence, an empty
@@ -1761,6 +1761,43 @@ fn nf_derive_rejects_a_misaligned_epoch_start() {
     );
 }
 
+/// A window has to land inside the epoch range: an index past `EPOCH_MAX`
+/// maps to no block height, so it labels no reachable epoch.
+///
+/// The witness is assembled here rather than through [`witness::nf_derive`],
+/// which derives the window prover-side and so trips the same bound before the
+/// step runs. The sequence is empty for the same reason: the range check
+/// precedes every use of it.
+#[test]
+fn nf_derive_rejects_a_window_past_the_final_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of a
+    // whole window by three epochs.
+    let epoch_start = EpochIndex(EPOCH_MAX - 3);
+    let master = honest_master(rng, &user, note);
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            delegation::NfDerive,
+            (epoch_start, NfSeqPoly::new(epoch_start, &[])),
+            master,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "NfDerive: window exceeds the epoch range"
+    );
+}
+
 /// A leaf exports its whole window, labelled with the window's bounds, and
 /// every window of the same note carries the same `cm`.
 #[test]
@@ -1770,12 +1807,12 @@ fn derivation_exports_the_whole_window() {
     let note = user.random_note(500);
 
     let epoch_start = EpochIndex(12);
-    let epoch_end = EpochIndex(epoch_start.0 + NF_DERIVATION_WIDTH as u32);
-    let range = user.derivation_pcd(rng, note, epoch_start, epoch_end);
-    let (cm, start, commit, range_end) = *range.data();
+    let epoch_last = EpochIndex(epoch_start.0 + NF_DERIVATION_WIDTH as u32 - 1);
+    let range = user.derivation_pcd(rng, note, epoch_start, epoch_last);
+    let (cm, start, commit, range_last) = *range.data();
 
     assert_eq!(start, epoch_start, "starts at the witnessed epoch");
-    assert_eq!(range_end, epoch_end, "spans the whole window");
+    assert_eq!(range_last, epoch_last, "spans the whole window");
     let members = user.covering_window(&note, &range);
     let seq = NfSeqPoly::new(epoch_start, &members);
     assert_eq!(commit, seq.commit(), "header commits the window sequence");
@@ -1784,7 +1821,7 @@ fn derivation_exports_the_whole_window() {
         rng,
         note,
         EpochIndex(100_000),
-        EpochIndex(100_000 + NF_DERIVATION_WIDTH as u32),
+        EpochIndex(100_000 + NF_DERIVATION_WIDTH as u32 - 1),
     );
     assert_eq!(cm, far.data().0, "same note cm");
 }
@@ -1799,21 +1836,21 @@ fn derivation_covers_with_whole_windows() {
 
     // Spans two windows: the fixture fuses whole-window leaves internally.
     let start = EpochIndex(NF_DERIVATION_WIDTH as u32 - 2);
-    let end = EpochIndex(NF_DERIVATION_WIDTH as u32 + 2);
-    let range = user.derivation_pcd(rng, note, start, end);
-    let (cm, cover_start, commit, cover_end) = *range.data();
+    let last = EpochIndex(NF_DERIVATION_WIDTH as u32 + 2);
+    let range = user.derivation_pcd(rng, note, start, last);
+    let (cm, cover_start, commit, cover_last) = *range.data();
 
     assert_eq!(Tachygram::from(cm), note.commitment().into());
     assert!(
-        cover_start.0 <= start.0 && end.0 <= cover_end.0,
+        cover_start.0 <= start.0 && last.0 <= cover_last.0,
         "covers the requested range"
     );
     assert_eq!(
-        (cover_end.0 - cover_start.0) % NF_DERIVATION_WIDTH as u32,
+        (cover_last.0 - cover_start.0 + 1) % NF_DERIVATION_WIDTH as u32,
         0,
         "whole windows"
     );
-    let members: Vec<Nullifier> = (cover_start.0..cover_end.0)
+    let members: Vec<Nullifier> = (cover_start.0..=cover_last.0)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
     let seq = NfSeqPoly::new(cover_start, &members);
@@ -1829,8 +1866,8 @@ fn nullifier_fuse_rejects_non_contiguous() {
     // Windows separated by a gap: the left window covers `[0, 16)`, the right
     // starts at 32, so the halves are not adjacent.
     let (left_start, right_start) = (EpochIndex(0), EpochIndex(32));
-    let range_a = user.derivation_pcd(rng, note, left_start, EpochIndex(16));
-    let range_b = user.derivation_pcd(rng, note, right_start, EpochIndex(48));
+    let range_a = user.derivation_pcd(rng, note, left_start, EpochIndex(15));
+    let range_b = user.derivation_pcd(rng, note, right_start, EpochIndex(47));
     let witness = witness::nullifier_fuse(
         (*range_a.data(), *range_b.data()),
         &user.covering_window(&note, &range_a),
@@ -1855,8 +1892,8 @@ fn nullifier_fuse_rejects_wrong_cm() {
     let note_b = user.random_note(700);
 
     let (left_start, right_start) = (EpochIndex(0), EpochIndex(16));
-    let range_a = user.derivation_pcd(rng, note_a, left_start, EpochIndex(16));
-    let range_b = user.derivation_pcd(rng, note_b, right_start, EpochIndex(32));
+    let range_a = user.derivation_pcd(rng, note_a, left_start, EpochIndex(15));
+    let range_b = user.derivation_pcd(rng, note_b, right_start, EpochIndex(31));
     let witness = witness::nullifier_fuse(
         (*range_a.data(), *range_b.data()),
         &user.covering_window(&note_a, &range_a),
@@ -1888,7 +1925,7 @@ fn spend_bind_parts(
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
     let spendable = user.spendable_init(rng, note, &pool, init_height);
-    let derived = user.derivation_pcd(rng, *note, epoch, EpochIndex(epoch.0 + 2));
+    let derived = user.derivation_pcd(rng, *note, epoch, EpochIndex(epoch.0 + 1));
     (spendable, derived, epoch)
 }
 
@@ -1925,7 +1962,7 @@ fn spend_bind_rejects_uncovering_range() {
 
     let (spendable, _derived, epoch) = spend_bind_parts(rng, &user, &note);
     let ahead = EpochIndex(epoch.0 + NF_DERIVATION_WIDTH as u32);
-    let derived_ahead = user.derivation_pcd(rng, note, ahead, EpochIndex(ahead.0 + 2));
+    let derived_ahead = user.derivation_pcd(rng, note, ahead, EpochIndex(ahead.0 + 1));
     // The builder would segment out of range, so the witness is assembled
     // by hand: the genuine covering sequence, an empty complement.
     let window = user.covering_window(&note, &derived_ahead);
@@ -1953,7 +1990,7 @@ fn spend_bind_rejects_a_foreign_range() {
     let other = user.random_note(700);
 
     let (spendable, _derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let foreign = user.derivation_pcd(rng, other, epoch, EpochIndex(epoch.0 + 2));
+    let foreign = user.derivation_pcd(rng, other, epoch, EpochIndex(epoch.0 + 1));
     let witness = witness::spend_bind(
         (*spendable.data(), *foreign.data()),
         &user.covering_window(&other, &foreign),
@@ -2000,7 +2037,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let dummy_tg = Tachygram::from(Fp::random(&mut *rng));
     let (_, _, _, _, nf_seq, complement_seq) = witness::spendable_init(
         (*nf_header.data(), ()),
@@ -2035,7 +2072,7 @@ fn spendable_init_rejects_an_uncovering_range() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let past = EpochIndex(NF_DERIVATION_WIDTH as u32);
     let dummy_tg = Tachygram::from(Fp::random(&mut *rng));
     // The builder would segment out of range, so the witness is assembled
@@ -2078,7 +2115,7 @@ fn unspent_bind_rejects_a_foreign_sequence() {
         &[user.nf_at(&note, EpochIndex(0))],
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&other, &range),
@@ -2230,8 +2267,8 @@ fn nullifier_fuse_composes() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(16));
-    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(32));
+    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(15));
+    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(31));
     let left_nfs: Vec<Nullifier> = (0..16)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
@@ -2244,9 +2281,9 @@ fn nullifier_fuse_composes() {
         .fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
         .expect("NullifierFuse");
 
-    let (cm, start, commit, end) = *merged.data();
+    let (cm, start, commit, last) = *merged.data();
     assert_eq!(cm, note.commitment());
-    assert_eq!((start, end), (EpochIndex(0), EpochIndex(32)));
+    assert_eq!((start, last), (EpochIndex(0), EpochIndex(31)));
     let members: Vec<Nullifier> = (0..32)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
@@ -2266,8 +2303,8 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(16));
-    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(32));
+    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(15));
+    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(31));
     let left_nfs: Vec<Nullifier> = (0..16)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
@@ -2314,7 +2351,7 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let derived = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(epoch.0 + 2));
+    let derived = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(epoch.0 + 1));
 
     let (nf_seq, _complement_seq, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
@@ -2322,12 +2359,12 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
     );
 
     // Garbage complement: another note's members in place of this note's.
-    let (_, deriv_start, _, deriv_end) = *derived.data();
+    let (_, deriv_start, _, deriv_last) = *derived.data();
     let stranger_mk = user.mk(&stranger);
     let older_members: Vec<Nullifier> = (deriv_start.0..epoch.0)
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex(epoch_idx)))
         .collect();
-    let newer_members: Vec<Nullifier> = (epoch.0 + 2..deriv_end.0)
+    let newer_members: Vec<Nullifier> = (epoch.0 + 2..=deriv_last.0)
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex(epoch_idx)))
         .collect();
     assert!(!older_members.is_empty(), "lower run must carry members");
@@ -2529,7 +2566,7 @@ fn unspent_bind_rejects_a_forged_complement() {
     );
     // A two-epoch derivation, so the honest complement is nonempty and the
     // forgery cannot hide behind the constant 1.
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(2));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -2568,7 +2605,7 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
         &[user.nf_at(&note, EpochIndex(0))],
         epoch1_height..=epoch1_height,
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(2));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let elapsed_seq = NfSeqPoly::new(EpochIndex(1), &[user.nf_at(&note, EpochIndex(0))]);
     let complement_seq = NfSeqPoly::new(EpochIndex(0), &[user.nf_at(&note, EpochIndex(0))]);
     let nf_seq = NfSeqPoly::new(EpochIndex(0), &user.covering_window(&note, &range));
@@ -2600,7 +2637,7 @@ fn unspent_bind_rejects_a_duplicating_complement() {
         &[user.nf_at(&note, EpochIndex(0))],
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(0));
     let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -2678,9 +2715,9 @@ fn one_window_serves_init_bind_and_spend() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
 
-    let window = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 2));
+    let window = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 1));
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let again = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
+    let again = user.derivation_pcd(rng, note, epoch, epoch);
     assert_eq!(
         again.data(),
         window.data(),
@@ -2704,7 +2741,7 @@ fn summary_spendable_syncs_to_a_spend() {
     pool.mine(random_block(rng, 1, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, _, anchor_last, _) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
 
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(

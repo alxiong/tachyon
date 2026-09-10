@@ -1051,7 +1051,7 @@ pub struct WalletSim {
     /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
     pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NfMasterHeader>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
-    /// epoch_end)`: repeated derivations of the same exact range share the
+    /// epoch_last)`: repeated derivations of the same exact range share the
     /// proof.
     pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NullifierDerivation>>>,
 }
@@ -1103,8 +1103,8 @@ impl WalletSim {
         note: &Note,
         range: &Pcd<delegation::NullifierDerivation>,
     ) -> Vec<Nullifier> {
-        let (_, start, _, end) = *range.data();
-        (start.0..end.0)
+        let (_, start, _, last) = *range.data();
+        (start.0..=last.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect()
     }
@@ -1136,7 +1136,7 @@ impl WalletSim {
         pcd
     }
 
-    /// The certified derivation PCD covering `[epoch_start, epoch_end)`,
+    /// The certified derivation PCD covering `[epoch_start, epoch_last]`,
     /// built from whole windows and cached by the covering range.
     ///
     /// The first window is the one opened by `epoch_start`'s group; further
@@ -1148,12 +1148,12 @@ impl WalletSim {
         rng: &mut RNG,
         note: Note,
         epoch_start: EpochIndex,
-        epoch_end: EpochIndex,
+        epoch_last: EpochIndex,
     ) -> Pcd<delegation::NullifierDerivation> {
         let base = epoch_start.0 - epoch_start.0 % PoseidonFp::RATE as u32;
-        let windows = (epoch_end.0 - base).div_ceil(NF_DERIVATION_WIDTH as u32);
-        let cover_end = base + windows * NF_DERIVATION_WIDTH as u32;
-        let key = (Tachygram::from(note.commitment()), base, cover_end);
+        let windows = (epoch_last.0 - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
+        let cover_last = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
+        let key = (Tachygram::from(note.commitment()), base, cover_last);
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
@@ -1162,7 +1162,7 @@ impl WalletSim {
         let mut merged: Option<Pcd<delegation::NullifierDerivation>> = None;
         for window in 0..windows {
             let chunk_start = EpochIndex(base + window * NF_DERIVATION_WIDTH as u32);
-            let chunk_end = EpochIndex(chunk_start.0 + NF_DERIVATION_WIDTH as u32);
+            let chunk_last = EpochIndex(chunk_start.0 + NF_DERIVATION_WIDTH as u32 - 1);
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -1178,7 +1178,7 @@ impl WalletSim {
                     let left_nfs: Vec<Nullifier> = (base..chunk_start.0)
                         .map(|epoch| self.nf_at(&note, EpochIndex(epoch)))
                         .collect();
-                    let right_nfs: Vec<Nullifier> = (chunk_start.0..chunk_end.0)
+                    let right_nfs: Vec<Nullifier> = (chunk_start.0..=chunk_last.0)
                         .map(|epoch| self.nf_at(&note, EpochIndex(epoch)))
                         .collect();
                     let (fused, ()) = PROOF_SYSTEM
@@ -1230,7 +1230,7 @@ impl WalletSim {
 
             (pre_cm_anchor, stamps[cm_idx].clone())
         };
-        let deriv = self.derivation_pcd(rng, *note, epoch, epoch.next().unwrap());
+        let deriv = self.derivation_pcd(rng, *note, epoch, epoch);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
@@ -1269,7 +1269,7 @@ impl WalletSim {
         note: &Note,
     ) -> Pcd<pool::Unspent> {
         let (_, (epoch_start, _), _, (present_epoch, _), _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch.next().unwrap());
+        let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch);
         let elapsed: Vec<Nullifier> = (epoch_start.0..=present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();
@@ -1342,7 +1342,7 @@ impl WalletSim {
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
             let range_pcd =
-                self.derivation_pcd(rng, note, spend_epoch, EpochIndex(spend_epoch.0 + 2));
+                self.derivation_pcd(rng, note, spend_epoch, EpochIndex(spend_epoch.0 + 1));
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
