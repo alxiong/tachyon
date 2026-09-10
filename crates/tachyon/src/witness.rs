@@ -160,7 +160,6 @@ pub fn unspent_fuse(
 /// sides of the unspent's span, multiplied.
 #[must_use]
 #[expect(
-    clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
 )]
@@ -172,9 +171,16 @@ pub fn unspent_bind(
     let (_, (epoch_start, _), _, (epoch_last, _), _) = unspent;
     let (_, deriv_start, ..) = deriv;
     let lo = (epoch_start.0 - deriv_start.0) as usize;
-    let hi = (epoch_last.next().0 - deriv_start.0) as usize;
-    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(epoch_last.next(), &window[hi..]);
+    let (head, from_span) = window.split_at(lo);
+    let (_span, tail) = from_span.split_at(elapsed.len());
+    let complement_seq = NfSeqPoly::new(deriv_start, head)
+        * epoch_last.next().map_or_else(
+            || {
+                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
+                NfSeqPoly::default()
+            },
+            |tail_start| NfSeqPoly::new(tail_start, tail),
+        );
     (
         NfSeqPoly::new(epoch_start, elapsed),
         NfSeqPoly::new(deriv_start, window),
@@ -192,7 +198,6 @@ pub fn unspent_bind(
 /// epoch, multiplied.
 #[must_use]
 #[expect(
-    clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
 )]
@@ -205,13 +210,23 @@ pub fn spendable_init(
 ) -> StepWitness<'static, SpendableInit> {
     let (_, deriv_start, ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
-    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(creation_epoch.next(), &window[lo + 1..]);
+    let (head, from_creation) = window.split_at(lo);
+    let Some((present_nf, tail)) = from_creation.split_first() else {
+        unreachable!("the creation epoch's member is in the window");
+    };
+    let complement_seq = NfSeqPoly::new(deriv_start, head)
+        * creation_epoch.next().map_or_else(
+            || {
+                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
+                NfSeqPoly::default()
+            },
+            |tail_start| NfSeqPoly::new(tail_start, tail),
+        );
     (
         pre_cm_anchor,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         creation_epoch,
-        window[lo],
+        *present_nf,
         NfSeqPoly::new(deriv_start, window),
         complement_seq,
     )
@@ -227,7 +242,6 @@ pub fn spendable_init(
 /// least one epoch past the spendable's epoch.
 #[must_use]
 #[expect(
-    clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
 )]
@@ -238,12 +252,23 @@ pub fn spend_bind(
     let (_, (epoch, _), _) = spendable;
     let (_, deriv_start, ..) = deriv;
     let lo = (epoch.0 - deriv_start.0) as usize;
-    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(EpochIndex(epoch.0 + 2), &window[lo + 2..]);
+    let (head, from_spend) = window.split_at(lo);
+    let (pair, tail) = from_spend.split_at(2);
+    let Some(nf_next) = pair.last() else {
+        unreachable!("the read pair is in the window");
+    };
+    let complement_seq = NfSeqPoly::new(deriv_start, head)
+        * epoch.next().and_then(EpochIndex::next).map_or_else(
+            || {
+                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
+                NfSeqPoly::default()
+            },
+            |tail_start| NfSeqPoly::new(tail_start, tail),
+        );
     (
         NfSeqPoly::new(deriv_start, window),
         complement_seq,
-        window[lo + 1],
+        *nf_next,
     )
 }
 
@@ -318,7 +343,6 @@ pub fn summary_unspent_init(
 /// [`spendable_init`].
 #[must_use]
 #[expect(
-    clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
 )]
@@ -333,11 +357,21 @@ pub fn summary_spendable_init(
 ) -> StepWitness<'static, SummarySpendableInit> {
     let (_, deriv_start, ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
-    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(creation_epoch.next(), &window[lo + 1..]);
+    let (head, from_creation) = window.split_at(lo);
+    let Some((present_nf, tail)) = from_creation.split_first() else {
+        unreachable!("the creation epoch's member is in the window");
+    };
+    let complement_seq = NfSeqPoly::new(deriv_start, head)
+        * creation_epoch.next().map_or_else(
+            || {
+                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
+                NfSeqPoly::default()
+            },
+            |tail_start| NfSeqPoly::new(tail_start, tail),
+        );
     (
         creation_epoch,
-        window[lo],
+        *present_nf,
         NfSeqPoly::new(deriv_start, window),
         complement_seq,
         summary_tgs.iter().copied().collect::<TachygramSetPoly>(),

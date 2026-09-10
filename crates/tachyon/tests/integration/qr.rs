@@ -1507,7 +1507,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
 fn qr_unspent_segments_of_consecutive_epochs_fuse_over_a_boundary_link() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex(0);
-    let epoch1 = epoch0.next();
+    let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     // Fill epoch zero and open epoch one, one stamp per block.
     pool.advance(epoch1.first_block().0 + 1, |_| random_block(rng, 1, 1));
@@ -1600,8 +1600,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex(0);
-    let epoch1 = epoch0.next();
-    let epoch2 = epoch1.next();
+    let epoch1 = epoch0.next().unwrap();
+    let epoch2 = epoch1.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     // Fill epochs zero and one and open epoch two, one stamp per block.
     pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 1));
@@ -1713,7 +1713,7 @@ fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
     assert_eq!(bucket.pcd.data().2, short_anchor);
     assert_eq!(
         bucket.pcd.data().3,
-        QrDiscriminant::from(short_anchor.next_epoch(epoch.next()).unwrap()),
+        QrDiscriminant::from(short_anchor.next_epoch(epoch.next().unwrap()).unwrap()),
         "the seal uses the short span's hypothetical closing tick"
     );
     assert_ne!(bucket.pcd.data().3, qr_discriminant_of(&pool, tip_anchor));
@@ -1745,7 +1745,7 @@ fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
         "the suffix covers only the same epoch, without a boundary crossing"
     );
     let lifted = user.lift(rng, spendable, suffix, &note);
-    let derived = user.derivation_pcd(rng, note, epoch, epoch.next().next());
+    let derived = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap().next().unwrap());
     let (bind, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1763,7 +1763,7 @@ fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
         (
             note.commitment(),
             nf,
-            user.nf_at(&note, epoch.next()),
+            user.nf_at(&note, epoch.next().unwrap()),
             tip_anchor
         ),
         "the spend reaches the pool tip without crossing at the bucket's endpoint"
@@ -1869,7 +1869,7 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex(0);
-    let epoch1 = epoch0.next();
+    let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let terminal0 = pool.block(epoch0.last_block()).anchor();
@@ -1922,7 +1922,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex(0);
-    let epoch1 = epoch0.next();
+    let epoch1 = epoch0.next().unwrap();
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let terminal0 = pool.block(epoch0.last_block()).anchor();
@@ -1957,7 +1957,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let fake_last = fake_prev.next_stamp(epoch1, &commit).expect("one member");
     let discriminant = QrDiscriminant::from(
         fake_last
-            .next_epoch(epoch1.next())
+            .next_epoch(epoch1.next().unwrap())
             .expect("epoch two is nonzero"),
     );
     let (intake, ()) = PROOF_SYSTEM
@@ -2496,7 +2496,7 @@ fn qr_intake_merge_rejects_different_epochs() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), junction, epoch.next(), &right_members),
+            witness::summary_seed(((), ()), junction, epoch.next().unwrap(), &right_members),
         )
         .expect("SummarySeed");
 

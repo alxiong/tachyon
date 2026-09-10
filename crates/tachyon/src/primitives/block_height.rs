@@ -26,18 +26,24 @@ impl From<usize> for BlockHeight {
 }
 
 impl BlockHeight {
-    /// Returns the next block height.
+    /// Returns the next block height, or `None` for [`BLOCK_MAX`].
+    ///
+    /// [`BLOCK_MAX`]: crate::constants::BLOCK_MAX
     #[must_use]
-    pub const fn next(self) -> Self {
-        #[expect(clippy::expect_used, reason = "don't go above u32::MAX")]
-        Self(self.0.checked_add(1).expect("do not exceed u32::MAX"))
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(height) => Some(Self(height)),
+            None => None,
+        }
     }
 
-    /// Returns the previous block height.
+    /// Returns the previous block height, or `None` for the genesis block.
     #[must_use]
-    pub const fn prev(self) -> Self {
-        #[expect(clippy::expect_used, reason = "don't go below u32::MIN")]
-        Self(self.0.checked_sub(1).expect("do not subceed u32::MIN"))
+    pub const fn prev(self) -> Option<Self> {
+        match self.0.checked_sub(1) {
+            Some(height) => Some(Self(height)),
+            None => None,
+        }
     }
 
     /// Epoch index for this block height.
@@ -56,5 +62,26 @@ impl BlockHeight {
     #[must_use]
     pub const fn is_epoch_first(self) -> bool {
         self.0 & (EPOCH_SIZE - 1) == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::BLOCK_MAX;
+
+    #[test]
+    fn next_stops_at_the_final_block() {
+        assert_eq!(
+            BlockHeight(BLOCK_MAX - 1).next(),
+            Some(BlockHeight(BLOCK_MAX))
+        );
+        assert_eq!(BlockHeight(BLOCK_MAX).next(), None);
+    }
+
+    #[test]
+    fn prev_stops_at_the_genesis_block() {
+        assert_eq!(BlockHeight(1).prev(), Some(BlockHeight(0)));
+        assert_eq!(BlockHeight(0).prev(), None);
     }
 }

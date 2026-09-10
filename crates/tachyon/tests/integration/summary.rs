@@ -339,7 +339,7 @@ fn summary_unspent_init_fuses_with_a_per_stamp_segment() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 2));
     pool.mine(random_block(rng, 2, 2));
     pool.mine(random_block(rng, 2, 2));
-    let end = pool.block(pool.height().prev()).anchor();
+    let end = pool.block(pool.height().prev().unwrap()).anchor();
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), end));
     let (epoch, anchor_prev, anchor_last, _) = *pcd.data();
     let nf = Nullifier::from(Fp::random(&mut *rng));
@@ -393,7 +393,7 @@ fn summary_spendable_init_starts_a_spendable_from_a_summary() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, _, anchor_last, _) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
 
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(
@@ -436,8 +436,8 @@ fn summary_spendable_init_rejects_a_foreign_covering_sequence() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
-    let foreign_deriv = user.derivation_pcd(rng, other, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
+    let foreign_deriv = user.derivation_pcd(rng, other, epoch, epoch.next().unwrap());
     let witness = witness::summary_spendable_init(
         (*deriv.data(), *summary_pcd.data()),
         &members,
@@ -473,7 +473,7 @@ fn summary_spendable_init_rejects_a_foreign_accumulator() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, _members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
     let foreign: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
 
     let err = PROOF_SYSTEM
@@ -509,7 +509,7 @@ fn summary_spendable_init_rejects_an_epoch_mismatch() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let claimed = epoch.next();
+    let claimed = epoch.next().unwrap();
     let deriv = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 2));
 
     let err = PROOF_SYSTEM
@@ -545,7 +545,7 @@ fn summary_spendable_init_rejects_a_forged_nullifier() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
     let (creation_epoch, _genuine, nf_seq, complement_seq, summary_set) =
         witness::summary_spendable_init(
             (*deriv.data(), *summary_pcd.data()),
@@ -583,7 +583,7 @@ fn summary_spendable_init_rejects_an_absent_commitment() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -620,7 +620,7 @@ fn summary_spendable_init_rejects_a_published_nullifier() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
 
     let err = PROOF_SYSTEM
         .fuse(

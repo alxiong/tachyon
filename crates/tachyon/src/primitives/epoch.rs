@@ -4,7 +4,7 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::Fp;
 
 use super::BlockHeight;
-use crate::constants::EPOCH_SIZE;
+use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
 
 /// A tachyon epoch — a point in the accumulator's history.
 ///
@@ -23,10 +23,17 @@ pub struct EpochIndex(pub u32);
 pub struct EpochDiff(u32);
 
 impl EpochIndex {
-    /// Returns the next epoch index.
+    /// Returns the next epoch index, or `None` for the final epoch.
+    ///
+    /// Indexes past [`EPOCH_MAX`] map to no block height in the protocol's
+    /// range, so the final epoch has no successor.
     #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+    pub const fn next(self) -> Option<Self> {
+        if self.0 < EPOCH_MAX {
+            Some(Self(self.0 + 1))
+        } else {
+            None
+        }
     }
 
     /// Returns the first block height of the epoch.
@@ -36,9 +43,12 @@ impl EpochIndex {
     }
 
     /// Returns the last block height of the epoch.
+    ///
+    /// Computed from this epoch's own first block, so the final epoch
+    /// ([`EPOCH_MAX`], whose last block is `BLOCK_MAX`) does not overflow.
     #[must_use]
     pub const fn last_block(self) -> BlockHeight {
-        BlockHeight(self.next().first_block().0 - 1)
+        BlockHeight(self.first_block().0 + (EPOCH_SIZE - 1))
     }
 }
 
@@ -82,5 +92,22 @@ mod tests {
     fn epoch_difference_rejects_reversed_operands() {
         let reversed = EpochIndex(3) - EpochIndex(7);
         panic!("reversed operands must not produce a difference, got {reversed:?}");
+    }
+
+    #[test]
+    fn final_epoch_ends_at_the_final_block() {
+        use crate::constants::BLOCK_MAX;
+
+        assert_eq!(EpochIndex(EPOCH_MAX).last_block(), BlockHeight(BLOCK_MAX));
+        assert_eq!(BlockHeight(BLOCK_MAX).epoch(), EpochIndex(EPOCH_MAX));
+    }
+
+    #[test]
+    fn next_stops_at_the_final_epoch() {
+        assert_eq!(
+            EpochIndex(EPOCH_MAX - 1).next(),
+            Some(EpochIndex(EPOCH_MAX))
+        );
+        assert_eq!(EpochIndex(EPOCH_MAX).next(), None);
     }
 }

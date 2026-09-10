@@ -505,7 +505,7 @@ pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
         if height >= end {
             break;
         }
-        height = height.next();
+        height = height.next().unwrap();
     }
 
     chain.expect("AnchorChain range must cover at least one stamp")
@@ -601,7 +601,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
 /// its terminal anchor `terminal` ticks to.
 pub(crate) fn qr_discriminant_of(pool: &PoolSim, terminal: Anchor) -> QrDiscriminant {
     terminal
-        .next_epoch(pool.epoch_at(terminal).next())
+        .next_epoch(pool.epoch_at(terminal).next().unwrap())
         .expect("epoch after the terminal is nonzero")
         .into()
 }
@@ -1230,7 +1230,7 @@ impl WalletSim {
 
             (pre_cm_anchor, stamps[cm_idx].clone())
         };
-        let deriv = self.derivation_pcd(rng, *note, epoch, epoch.next());
+        let deriv = self.derivation_pcd(rng, *note, epoch, epoch.next().unwrap());
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
@@ -1269,7 +1269,7 @@ impl WalletSim {
         note: &Note,
     ) -> Pcd<pool::Unspent> {
         let (_, (epoch_start, _), _, (present_epoch, _), _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch.next());
+        let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch.next().unwrap());
         let elapsed: Vec<Nullifier> = (epoch_start.0..=present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();

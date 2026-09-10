@@ -14,7 +14,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram, TachygramSetPoly,
-    constants::EPOCH_SIZE,
+    constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     effect,
     entropy::ActionEntropy,
@@ -102,7 +102,7 @@ fn same_epoch_honest_spend_accepted() {
 
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch).into(),
-        user.nf_at(&note, epoch.next()).into(),
+        user.nf_at(&note, epoch.next().unwrap()).into(),
     ])
     .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
@@ -365,7 +365,7 @@ fn spend_bind_honest() {
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
     let (_cm, present_nf, nf_next, _anchor) = *bind_pcd.data();
     assert_eq!(present_nf, user.nf_at(&note, spend_epoch));
-    assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next()));
+    assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
 }
 
 #[test]
@@ -561,7 +561,7 @@ fn spend_stamp_assembles_tachygrams() {
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
         Tachygram::from(user.nf_at(&note, spend_epoch)),
-        Tachygram::from(user.nf_at(&note, spend_epoch.next())),
+        Tachygram::from(user.nf_at(&note, spend_epoch.next().unwrap())),
     ])
     .commit();
     assert_eq!(tg_commit, expected);
@@ -1394,7 +1394,7 @@ fn unspent_bind_rejects_tip_mismatch() {
     // final member, so the poly bind passes; the divisibility read then
     // finds no such member in the genuine sequence and rejects it.
     let (_, _, _, (unspent_last, _), _) = *unspent.data();
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), unspent_last.next());
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), unspent_last.next().unwrap());
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
@@ -1412,6 +1412,41 @@ fn unspent_bind_rejects_tip_mismatch() {
         inner.to_string(),
         "UnspentBind: sequence does not match the derivation"
     );
+}
+
+#[test]
+fn unspent_bind_window_may_end_at_the_final_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    // The epoch space's last derivation window: the unspent span covers all
+    // of it, ending at the final epoch, which has no successor.
+    let epoch_start = EpochIndex(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
+    let epoch_last = EpochIndex(EPOCH_MAX);
+    let range = user.derivation_pcd(rng, note, epoch_start, epoch_last);
+
+    let elapsed: Vec<Nullifier> = (epoch_start.0..=epoch_last.0)
+        .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
+        .collect();
+    let synthetic_unspent = (
+        Anchor::from(Fp::ZERO),
+        (epoch_start, elapsed[0]),
+        NfSeqPoly::new(epoch_start, &elapsed).commit(),
+        (epoch_last, elapsed[elapsed.len() - 1]),
+        Anchor::from(Fp::ZERO),
+    );
+
+    let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
+        (synthetic_unspent, *range.data()),
+        &user.covering_window(&note, &range),
+        &elapsed,
+    );
+
+    // The span covers the whole window, so the complement is empty on both
+    // sides: the multiplicative identity.
+    assert_eq!(complement_seq.commit(), NfSeqPoly::default().commit());
+    assert_eq!(elapsed_seq.commit(), nf_seq.commit());
 }
 
 #[test]
@@ -1516,7 +1551,7 @@ fn unspent_bind_rejects_uncovered_end() {
                 anchor,
                 last,
                 user.nf_at(&note, last),
-                user.nf_at(&note, last.next()),
+                user.nf_at(&note, last.next().unwrap()),
             ),
         )
         .expect("EndEpochUnspentSeed");
@@ -1529,7 +1564,10 @@ fn unspent_bind_rejects_uncovered_end() {
     let witness = (
         NfSeqPoly::new(
             last,
-            &[user.nf_at(&note, last), user.nf_at(&note, last.next())],
+            &[
+                user.nf_at(&note, last),
+                user.nf_at(&note, last.next().unwrap()),
+            ],
         ),
         NfSeqPoly::new(EpochIndex(0), &window),
         NfSeqPoly::new(EpochIndex(0), &[]),
@@ -1894,7 +1932,7 @@ fn spend_bind_rejects_uncovering_range() {
     let witness = (
         NfSeqPoly::new(ahead, &window),
         NfSeqPoly::new(ahead, &[]),
-        user.nf_at(&note, epoch.next()),
+        user.nf_at(&note, epoch.next().unwrap()),
     );
     expect_invalid(
         rng,
@@ -2642,7 +2680,7 @@ fn one_window_serves_init_bind_and_spend() {
 
     let window = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 2));
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let again = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let again = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
     assert_eq!(
         again.data(),
         window.data(),
@@ -2651,7 +2689,7 @@ fn one_window_serves_init_bind_and_spend() {
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable, epoch);
     assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch));
-    assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next()));
+    assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next().unwrap()));
 }
 
 /// A summary-started spendable lifts across the epoch boundary and binds to a
@@ -2666,7 +2704,7 @@ fn summary_spendable_syncs_to_a_spend() {
     pool.mine(random_block(rng, 1, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, _, anchor_last, _) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next().unwrap());
 
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(
