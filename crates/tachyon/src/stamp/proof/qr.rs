@@ -38,8 +38,9 @@ use crate::{
     digest::poseidon,
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
+        Anchor, EpochIndex, FactoredPoly as _, NfSeqPoly, QrClassRoot, QrDiscriminant,
+        QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetCommit,
+        TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -275,9 +276,9 @@ impl Step for QrIntakeMerge {
         )?;
         enforce_poly_product(
             ctx,
-            left_contents.as_ref(),
-            right_contents.as_ref(),
-            merged.as_ref(),
+            &left_contents,
+            &right_contents,
+            &merged,
             "QrIntakeMerge: merged contents are not the union of the inputs",
         )?;
 
@@ -332,9 +333,9 @@ impl Step for QrIntakeSplit {
         )?;
         enforce_poly_product(
             ctx,
-            residue.as_ref(),
-            non_residue.as_ref(),
-            contents.as_ref(),
+            &residue,
+            &non_residue,
+            &contents,
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
 

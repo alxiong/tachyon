@@ -14,7 +14,7 @@ use crate::{
     collections::indexed_multiset::IndexedMultiset,
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, NfSeqPoly},
+    primitives::{Anchor, FactoredPoly as _, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 

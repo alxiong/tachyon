@@ -23,7 +23,7 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::NF_DERIVATION_WIDTH,
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    primitives::{EpochIndex, FactoredPoly as _, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
@@ -289,9 +289,9 @@ impl Step for NullifierFuse {
         let merged_nf_commit = merged_seq.commit();
         enforce_poly_product(
             ctx,
-            left_seq.as_ref(),
-            right_seq.as_ref(),
-            merged_seq.as_ref(),
+            &left_seq,
+            &right_seq,
+            &merged_seq,
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         Ok((

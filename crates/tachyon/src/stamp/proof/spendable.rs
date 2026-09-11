@@ -24,7 +24,7 @@ use crate::{
     collections::indexed_multiset::IndexedMultiset,
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, FactoredPoly as _, NfSeqPoly, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 

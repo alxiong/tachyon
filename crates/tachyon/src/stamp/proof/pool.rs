@@ -30,7 +30,8 @@ use crate::{
     note::{self},
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
+        Anchor, EpochIndex, FactoredPoly as _, NfSeqCommit, NfSeqPoly, TachygramSetCommit,
+        TachygramSetPoly,
     },
     ragu_constraint::{
         conditional_enforce_equal, enforce_equal_point, enforce_nonzero, enforce_zero,
@@ -611,9 +612,9 @@ impl Step for UnspentBind {
         // elapsed member is a genuine derived pair.
         enforce_poly_product(
             ctx,
-            elapsed_seq.as_ref(),
-            complement_seq.as_ref(),
-            nf_seq.as_ref(),
+            &elapsed_seq,
+            &complement_seq,
+            &nf_seq,
             "UnspentBind: sequence does not match the derivation",
         )?;
 
