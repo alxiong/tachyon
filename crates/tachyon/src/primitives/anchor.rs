@@ -63,7 +63,7 @@ impl Anchor {
     ///
     /// Fails if `next_epoch` is zero.
     pub fn next_epoch(self, next_epoch: EpochIndex) -> Result<Self, AnchorError> {
-        if next_epoch == EpochIndex(0) {
+        if next_epoch == EpochIndex::new(0) {
             Err(AnchorError::NextEpochZero)
         } else {
             Ok(Self(poseidon::anchor_next_epoch(self.0, next_epoch.into())))
@@ -103,15 +103,15 @@ mod tests {
         let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
 
         let forward = Anchor::default()
-            .next_stamp(EpochIndex(7), &first)
+            .next_stamp(EpochIndex::new(7), &first)
             .unwrap()
-            .next_stamp(EpochIndex(7), &second)
+            .next_stamp(EpochIndex::new(7), &second)
             .unwrap();
 
         let reverse = Anchor::default()
-            .next_stamp(EpochIndex(7), &second)
+            .next_stamp(EpochIndex::new(7), &second)
             .unwrap()
-            .next_stamp(EpochIndex(7), &first)
+            .next_stamp(EpochIndex::new(7), &first)
             .unwrap();
 
         assert_ne!(forward, reverse);
@@ -126,7 +126,7 @@ mod tests {
             let anchor = Anchor(Fp::random(&mut *rng));
             let zero_set = TachygramSetCommit::from(Eq::identity());
 
-            let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex(7), &zero_set)
+            let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex::new(7), &zero_set)
             else {
                 panic!("should not be able to advance with an identity stamp");
             };
@@ -137,7 +137,7 @@ mod tests {
             let anchor = Anchor(Fp::random(&mut *rng));
             let one_set = TachygramSetCommit::default();
 
-            let Err(AnchorError::NextStampEmpty) = anchor.next_stamp(EpochIndex(1), &one_set)
+            let Err(AnchorError::NextStampEmpty) = anchor.next_stamp(EpochIndex::new(1), &one_set)
             else {
                 panic!("should not be able to advance with an empty stamp");
             };
@@ -150,7 +150,7 @@ mod tests {
 
         let anchor = Anchor(Fp::random(rng));
 
-        let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex(0)) else {
+        let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex::new(0)) else {
             panic!("should not be able to advance to epoch zero");
         };
     }

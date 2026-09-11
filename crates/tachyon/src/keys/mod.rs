@@ -163,12 +163,26 @@ mod tests {
     #[test]
     fn window_matches_per_epoch_derivation() {
         let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
-        let epoch_start = EpochIndex(96);
+        let epoch_start = EpochIndex::new(96);
 
-        let epochs = (epoch_start.0..).map(EpochIndex);
+        let epochs = (u32::from(epoch_start)..).map(EpochIndex::new);
         for (epoch, nf) in epochs.zip(mk.derive_window(epoch_start)) {
-            assert_eq!(nf, mk.derive_nullifier(epoch), "epoch {}", epoch.0);
+            assert_eq!(nf, mk.derive_nullifier(epoch), "epoch {}", u32::from(epoch));
         }
+    }
+
+    /// A window that would run past the epoch range names epochs that map to
+    /// no block height, so there is nothing to derive.
+    #[test]
+    #[should_panic(expected = "epoch index above EPOCH_MAX")]
+    fn window_rejects_a_start_too_close_to_the_final_epoch() {
+        use crate::constants::EPOCH_MAX;
+
+        let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
+        // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of
+        // a whole window by three epochs.
+        let window = mk.derive_window(EpochIndex::new(EPOCH_MAX - 3));
+        panic!("a window past the final epoch must not derive, got {window:?}");
     }
 
     #[test]

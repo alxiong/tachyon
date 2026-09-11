@@ -37,7 +37,7 @@ impl Header for Summary {
         let (epoch, anchor_prev, anchor_last, acc_commit) = *data;
         (
             vec![
-                Fp::from(u64::from(epoch.0)),
+                Fp::from(epoch),
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
             ],

@@ -16,8 +16,8 @@ Multiple parties execute the proof tree.
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
 `NfMasterSeed` witnesses the note and the proof-authorizing key `pak`, checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits an `NfMasterHeader` carrying `(cm, mk)`. `nk` never leaves the step.
 `NfDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
-`NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end`).
-The result is a `NullifierDerivation` proving the range `[epoch_start, epoch_end)` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
+`NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_last + 1`).
+The result is a `NullifierDerivation` proving the range `[epoch_start, epoch_last]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
 
 ### Bootstrapping a spendable
 
@@ -433,7 +433,7 @@ flowchart LR
 | ArbitraryUnspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) |
 | Unspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_last, nf_last), anchor_last) |
 | NfMasterHeader | (cm, mk) |
-| NullifierDerivation | (cm, epoch_start, nf_commit, epoch_end) |
+| NullifierDerivation | (cm, epoch_start, nf_commit, epoch_last) |
 | SpendableHeader | (cm, (epoch, present_nf), anchor) |
 | OutputHeader | (cm, pad) |
 | SpendHeader | (cm, present_nf, nf_next, anchor) |

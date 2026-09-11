@@ -77,9 +77,9 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let spend_end = EpochIndex(spend_epoch.0 + 2);
-    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_end);
-    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_end);
+    let spend_last = EpochIndex::new(u32::from(spend_epoch) + 1);
+    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_last);
+    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_last);
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -303,13 +303,25 @@ fn double_spend_cannot_aggregate() {
 
     // Two spendable lineages for the SAME note produce identical nullifiers.
     let init_a = wallet.spendable_init(rng, &spend, &pool, cm_height);
-    let sp_a = wallet.lift_to_epoch(rng, &pool, &spend, init_a, cm_height.epoch().next());
+    let sp_a = wallet.lift_to_epoch(
+        rng,
+        &pool,
+        &spend,
+        init_a,
+        cm_height.epoch().next().unwrap(),
+    );
     let init_b = wallet.spendable_init(rng, &spend, &pool, cm_height);
-    let sp_b = wallet.lift_to_epoch(rng, &pool, &spend, init_b, cm_height.epoch().next());
+    let sp_b = wallet.lift_to_epoch(
+        rng,
+        &pool,
+        &spend,
+        init_b,
+        cm_height.epoch().next().unwrap(),
+    );
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
 
-    let spend_epoch = cm_height.epoch().next();
+    let spend_epoch = cm_height.epoch().next().unwrap();
     let autonome_a = wallet.autonome(
         rng,
         anchor,
@@ -739,7 +751,7 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let lifted_to = pool.height();
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next()..=lifted_to);
+    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
 
     let before = stamp.clone();
     let lifted = stamp
@@ -767,7 +779,7 @@ fn lift_then_verify() {
     let digest = plan.digest().expect("valid plan");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next()..=pool.height());
+    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp.prove_lift(rng, [digest], chain).expect("lift");
 
@@ -853,7 +865,7 @@ fn lift_rejects_wrong_digests() {
     let foreign_digest = random_action(rng).digest().expect("valid action");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next()..=pool.height());
+    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
         .prove_lift(rng, [foreign_digest], chain)
@@ -896,7 +908,7 @@ fn merge_after_lift() {
     )
     .expect_err("mismatched anchors must not merge");
 
-    let chain = build_anchor_chain_pcd(rng, &pool, height_a.next()..=height_b);
+    let chain = build_anchor_chain_pcd(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
         .prove_lift(rng, [plan_a.digest().expect("valid plan")], chain)
         .expect("lift onto the later anchor");

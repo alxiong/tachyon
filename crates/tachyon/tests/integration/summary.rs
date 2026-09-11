@@ -24,7 +24,7 @@ use crate::fixtures::{
 #[test]
 fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let stamp_a: [Tachygram; 3] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
     let stamp_b: [Tachygram; 2] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
@@ -95,7 +95,7 @@ fn summary_over_an_anchor_span_matches_the_pool() {
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, anchor_prev, anchor_last, acc_commit) = *pcd.data();
 
-    assert_eq!(epoch, EpochIndex(0));
+    assert_eq!(epoch, EpochIndex::new(0));
     assert_eq!(
         anchor_prev,
         Anchor::default(),
@@ -128,7 +128,7 @@ fn summary_seed_rejects_empty_stamp() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), start, EpochIndex(3), &[]),
+            witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
         )
         .err()
         .unwrap();
@@ -141,7 +141,7 @@ fn summary_seed_rejects_empty_stamp() {
 #[test]
 fn summary_advance_rejects_wrong_accumulator() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let stamp_a = [Tachygram::from(Fp::random(&mut *rng))];
     let stamp_b = [Tachygram::from(Fp::random(&mut *rng))];
@@ -177,7 +177,7 @@ fn summary_advance_rejects_wrong_accumulator() {
 #[test]
 fn summary_advance_rejects_forged_extension() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
+    let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
     let stamp_a = [Tachygram::from(Fp::random(&mut *rng))];
     let stamp_b = [Tachygram::from(Fp::random(&mut *rng))];
@@ -228,7 +228,7 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), first.prev, EpochIndex(1), &first.stamps[0].1),
+            witness::summary_seed(((), ()), first.prev, EpochIndex::new(1), &first.stamps[0].1),
         )
         .expect("SummarySeed");
     let (_, _, anchor_last, _) = *seeded.data();
@@ -339,7 +339,7 @@ fn summary_unspent_init_fuses_with_a_per_stamp_segment() {
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 2));
     pool.mine(random_block(rng, 2, 2));
     pool.mine(random_block(rng, 2, 2));
-    let end = pool.block(pool.height().prev()).anchor();
+    let end = pool.block(pool.height().prev().unwrap()).anchor();
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), end));
     let (epoch, anchor_prev, anchor_last, _) = *pcd.data();
     let nf = Nullifier::from(Fp::random(&mut *rng));
@@ -393,7 +393,7 @@ fn summary_spendable_init_starts_a_spendable_from_a_summary() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, _, anchor_last, _) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
 
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(
@@ -436,8 +436,8 @@ fn summary_spendable_init_rejects_a_foreign_covering_sequence() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
-    let foreign_deriv = user.derivation_pcd(rng, other, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
+    let foreign_deriv = user.derivation_pcd(rng, other, epoch, epoch);
     let witness = witness::summary_spendable_init(
         (*deriv.data(), *summary_pcd.data()),
         &members,
@@ -473,7 +473,7 @@ fn summary_spendable_init_rejects_a_foreign_accumulator() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, _members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
     let foreign: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
 
     let err = PROOF_SYSTEM
@@ -509,8 +509,8 @@ fn summary_spendable_init_rejects_an_epoch_mismatch() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let claimed = epoch.next();
-    let deriv = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 2));
+    let claimed = epoch.next().unwrap();
+    let deriv = user.derivation_pcd(rng, note, epoch, EpochIndex::new(u32::from(epoch) + 1));
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -545,7 +545,7 @@ fn summary_spendable_init_rejects_a_forged_nullifier() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
     let (creation_epoch, _genuine, nf_seq, complement_seq, summary_set) =
         witness::summary_spendable_init(
             (*deriv.data(), *summary_pcd.data()),
@@ -583,7 +583,7 @@ fn summary_spendable_init_rejects_an_absent_commitment() {
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -614,13 +614,13 @@ fn summary_spendable_init_rejects_a_published_nullifier() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
-    let spent = Tachygram::from(user.nf_at(&note, EpochIndex(0)));
+    let spent = Tachygram::from(user.nf_at(&note, EpochIndex::new(0)));
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.mine(vec![vec![spent]]);
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
     let (epoch, ..) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
 
     let err = PROOF_SYSTEM
         .fuse(

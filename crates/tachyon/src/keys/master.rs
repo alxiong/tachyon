@@ -36,8 +36,9 @@ impl NoteMasterKey {
         reason = "the remainder indexes an array of PoseidonFp::RATE"
     )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
-        let inner_index = epoch.0 as usize % PoseidonFp::RATE;
-        let epoch_start = EpochIndex(epoch.0 - (inner_index as u32));
+        let index = u32::from(epoch);
+        let inner_index = index as usize % PoseidonFp::RATE;
+        let epoch_start = EpochIndex::new(index - (inner_index as u32));
         Nullifier::from(poseidon::nullifier_group(self.0, epoch_start.into())[inner_index])
     }
 
@@ -49,6 +50,10 @@ impl NoteMasterKey {
     /// witnessed start epoch accordingly. Group alignment makes the sponge
     /// count a compile-time constant inside the step:
     /// `NF_DERIVATION_WIDTH / PoseidonFp::RATE` permutations each way.
+    ///
+    /// # Panics
+    ///
+    /// If the window would run past [`EPOCH_MAX`](crate::constants::EPOCH_MAX).
     #[must_use]
     #[expect(
         clippy::as_conversions,
@@ -60,14 +65,14 @@ impl NoteMasterKey {
     )]
     pub fn derive_window(&self, epoch_start: EpochIndex) -> [Nullifier; NF_DERIVATION_WIDTH] {
         debug_assert_eq!(
-            epoch_start.0 % (PoseidonFp::RATE as u32),
+            u32::from(epoch_start) % (PoseidonFp::RATE as u32),
             0,
             "epoch_start must be group-aligned"
         );
         let groups: [[Fp; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
             array::from_fn(|offset| {
-                let group_start = epoch_start.0 + (offset * PoseidonFp::RATE) as u32;
-                poseidon::nullifier_group(self.0, Fp::from(EpochIndex(group_start)))
+                let group_start = u32::from(epoch_start) + (offset * PoseidonFp::RATE) as u32;
+                poseidon::nullifier_group(self.0, Fp::from(EpochIndex::new(group_start)))
             });
         array::from_fn(|slot| {
             Nullifier::from(groups[slot / PoseidonFp::RATE][slot % PoseidonFp::RATE])
