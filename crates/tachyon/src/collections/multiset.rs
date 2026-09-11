@@ -13,9 +13,10 @@
 //! [`Multiset`] keeps the members as its canonical representation -- a
 //! [`BTreeMap`] count-map -- and defers realization into coefficient form
 //! until [committed](Multiset::commit). Operating on the set form is much
-//! cheaper: union is a count merge rather than a coefficient convolution, the
-//! quotient witness is count subtraction rather than polynomial division, and
-//! evaluation streams over members without materializing coefficients.
+//! cheaper: a product is a count merge rather than a coefficient
+//! convolution, the quotient witness is count subtraction rather than
+//! polynomial division, and evaluation streams over members without
+//! materializing coefficients.
 //!
 //! The stamp sets built on this type are non-repeating in practice (a stamp's
 //! tachygrams are unique on the wire), but the representation stays a general
@@ -93,18 +94,17 @@ impl Multiset {
         }
     }
 
-    /// Multiset union: adds the multiplicities of the two operands, matching
+    /// Multiset sum: adds `other`'s multiplicities to this one's, matching
     /// the product of their encoded polynomials.
     ///
     /// # Panics
     ///
     /// If one member's multiplicity exceeds `u32::MAX`, far beyond the
     /// realizable coefficient capacity.
-    #[must_use]
-    pub(crate) fn union(&self, other: &Self) -> Self {
-        let mut members = self.members.clone();
+    pub(crate) fn add_factors(&mut self, other: &Self) {
+        self.reset_memo();
         for (&key, &count) in &other.members {
-            match members.entry(key) {
+            match self.members.entry(key) {
                 Entry::Occupied(mut occupied) => {
                     #[expect(
                         clippy::expect_used,
@@ -121,37 +121,28 @@ impl Multiset {
                 },
             }
         }
-        Self {
-            members,
-            ..Self::default()
-        }
     }
 
-    /// Multiset difference `self \ divisor`: the quotient witness of the
-    /// encoded polynomials, computed by count subtraction instead of
-    /// polynomial division.
+    /// Multiset difference: subtracts `other`'s multiplicities from this
+    /// one's, the quotient of the encoded polynomials computed by count
+    /// subtraction instead of polynomial division.
     ///
-    /// Returns [`None`] when `divisor` is not a sub-multiset of `self`, in
-    /// which case no polynomial quotient exists either.
-    #[must_use]
-    pub(crate) fn quotient(&self, divisor: &Self) -> Option<Self> {
-        let mut members = self.members.clone();
-        for (&key, &needed) in &divisor.members {
-            let Entry::Occupied(mut occupied) = members.entry(key) else {
-                return None;
+    /// Saturating, so a member `other` holds more often than `self` does
+    /// leaves at zero. `other` divides `self` exactly when no such member
+    /// exists.
+    pub(crate) fn rm_factors(&mut self, other: &Self) {
+        self.reset_memo();
+        for (&key, &removed) in &other.members {
+            let Entry::Occupied(mut occupied) = self.members.entry(key) else {
+                continue;
             };
-            let remaining = occupied.get().get().checked_sub(needed.get())?;
-            match NonZero::new(remaining) {
+            match NonZero::new(occupied.get().get().saturating_sub(removed.get())) {
                 Some(count) => *occupied.get_mut() = count,
                 None => {
                     occupied.remove();
                 },
             }
         }
-        Some(Self {
-            members,
-            ..Self::default()
-        })
     }
 
     /// Evaluate the encoded polynomial at `x` by streaming over the members,
@@ -267,42 +258,60 @@ mod tests {
         assert_eq!(empty.realize().eval(Fp::random(rng)), Fp::ONE);
     }
 
+    /// `self.add_factors(other)`, as an expression.
+    fn product(left: &Multiset, right: &Multiset) -> Multiset {
+        let mut product = left.clone();
+        product.add_factors(right);
+        product
+    }
+
+    /// `self.rm_factors(other)`, as an expression.
+    fn quotient(left: &Multiset, right: &Multiset) -> Multiset {
+        let mut quotient = left.clone();
+        quotient.rm_factors(right);
+        quotient
+    }
+
     #[test]
-    fn union_matches_realized_product() {
+    fn added_factors_match_the_realized_product() {
         let rng = &mut StdRng::seed_from_u64(17);
         let left = random_set(rng, 3);
         // The right operand overlaps the left entirely: shared members'
         // multiplicities add, exactly as the product's factors do.
-        let right = random_set(rng, 4).union(&left);
-        let union = left.union(&right);
+        let right = product(&random_set(rng, 4), &left);
+        let whole = product(&left, &right);
         let x = Fp::random(&mut *rng);
-        assert_eq!(union.eval(x), left.eval(x) * right.eval(x));
-        assert_eq!(union.realize().eval(x), left.eval(x) * right.eval(x));
+        assert_eq!(whole.eval(x), left.eval(x) * right.eval(x));
+        assert_eq!(whole.realize().eval(x), left.eval(x) * right.eval(x));
     }
 
     #[test]
-    fn union_quotient_roundtrip() {
+    fn factor_arithmetic_roundtrips() {
         let rng = &mut StdRng::seed_from_u64(23);
         let set = random_set(rng, 5);
         let complement = random_set(rng, 3);
-        let union = set.union(&complement);
-        assert_eq!(union.quotient(&complement), Some(set.clone()));
-        assert_eq!(union.quotient(&set), Some(complement));
-        assert_eq!(union.quotient(&union), Some(Multiset::default()));
+        let whole = product(&set, &complement);
+        assert_eq!(quotient(&whole, &complement), set);
+        assert_eq!(quotient(&whole, &set), complement);
+        assert_eq!(quotient(&whole, &whole), Multiset::default());
     }
 
     #[test]
-    fn quotient_by_non_sub_multiset_is_none() {
+    fn removing_absent_factors_saturates() {
         let rng = &mut StdRng::seed_from_u64(29);
         let set = random_set(rng, 4);
         let disjoint = random_set(rng, 2);
-        assert_eq!(set.quotient(&disjoint), None);
+        assert_eq!(
+            quotient(&set, &disjoint),
+            set,
+            "a disjoint divisor takes nothing away"
+        );
 
-        // A divisor with excess multiplicity of a present member is not a
-        // sub-multiset either.
-        let doubled = set.union(&set);
-        assert_eq!(set.quotient(&doubled), None);
-        assert_eq!(doubled.quotient(&set), Some(set));
+        // A divisor with excess multiplicity of a present member takes out
+        // only what is there.
+        let doubled = product(&set, &set);
+        assert_eq!(quotient(&set, &doubled), Multiset::default());
+        assert_eq!(quotient(&doubled, &set), set);
     }
 
     #[test]

@@ -1,10 +1,11 @@
+use core::ops::{Div, DivAssign, Mul, MulAssign};
+
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use group::Curve as _;
 use pasta_curves::{Eq, Fp};
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 
-use super::{ActionDigest, Tachygram};
+use super::{ActionDigest, FactoredPoly, Tachygram, factored::impl_factored_poly};
 use crate::{collections::multiset::Multiset, serialization};
 
 /// Pedersen commitment to a stamp's tachygram set.
@@ -57,19 +58,24 @@ impl Default for ActionSetCommit {
     }
 }
 
-/// Witness for a stamp's tachygram set, held in multiset form: the members
-/// are the roots of the encoded polynomial, realized into a [`Polynomial`]
-/// lazily and memoized alongside its commitment. Non-repeating in practice
-/// (a stamp's tachygrams are unique on the wire), but the representation
-/// stays a general multiset: a repeated member repeats its factor.
+/// Witness for a stamp's tachygram set, held in multiset form.
+///
+/// The members are the roots of the encoded polynomial, realized into
+/// coefficient form lazily and memoized alongside its commitment.
+/// Non-repeating in practice (a stamp's tachygrams are unique on the wire),
+/// but the representation stays a general multiset: a repeated member
+/// repeats its factor. Evaluation and set arithmetic live on
+/// [`FactoredPoly`].
 #[derive(Clone, Debug, Default, PartialEq, TotalEq)]
 pub struct TachygramSetPoly(Multiset);
 
-/// Witness for a stamp's action-digest set, held in multiset form: the
-/// members are the roots of the encoded polynomial, realized into a
-/// [`Polynomial`] lazily and memoized alongside its commitment. Multiplicity
-/// is load-bearing here: a stamp covering an action twice must not be
-/// confusable with one covering it once.
+/// Witness for a stamp's action-digest set, held in multiset form.
+///
+/// The members are the roots of the encoded polynomial, realized into
+/// coefficient form lazily and memoized alongside its commitment.
+/// Multiplicity is load-bearing here: a stamp covering an action twice must
+/// not be confusable with one covering it once. Evaluation and set
+/// arithmetic live on [`FactoredPoly`].
 #[derive(Clone, Debug, Default, PartialEq, TotalEq)]
 pub struct ActionSetPoly(Multiset);
 
@@ -80,31 +86,6 @@ impl TachygramSetPoly {
     pub fn commit(&self) -> TachygramSetCommit {
         TachygramSetCommit(self.0.commit())
     }
-
-    /// Evaluate the set polynomial at a given point, streaming over the
-    /// members without realizing the coefficients.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
-
-    /// Multiset union: adds the members' multiplicities, matching the
-    /// product of the encoded polynomials with no polynomial arithmetic
-    /// involved.
-    #[must_use]
-    pub fn union(&self, other: &Self) -> Self {
-        Self(self.0.union(&other.0))
-    }
-
-    /// The quotient witness `self / divisor`, computed as the multiset
-    /// difference of the members instead of by polynomial division.
-    ///
-    /// Returns [`None`] when `divisor` is not a sub-multiset of `self`, in
-    /// which case no polynomial quotient exists either.
-    #[must_use]
-    pub fn quotient(&self, divisor: &Self) -> Option<Self> {
-        self.0.quotient(&divisor.0).map(Self)
-    }
 }
 
 impl ActionSetPoly {
@@ -114,54 +95,10 @@ impl ActionSetPoly {
     pub fn commit(&self) -> ActionSetCommit {
         ActionSetCommit(self.0.commit())
     }
-
-    /// Evaluate the set polynomial at a given point, streaming over the
-    /// members without realizing the coefficients.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
-    }
-
-    /// Multiset union: adds the members' multiplicities, matching the
-    /// product of the encoded polynomials with no polynomial arithmetic
-    /// involved.
-    #[must_use]
-    pub fn union(&self, other: &Self) -> Self {
-        Self(self.0.union(&other.0))
-    }
-
-    /// The quotient witness `self / divisor`, computed as the multiset
-    /// difference of the members instead of by polynomial division.
-    ///
-    /// Returns [`None`] when `divisor` is not a sub-multiset of `self`, in
-    /// which case no polynomial quotient exists either.
-    #[must_use]
-    pub fn quotient(&self, divisor: &Self) -> Option<Self> {
-        self.0.quotient(&divisor.0).map(Self)
-    }
 }
 
-impl AsRef<Polynomial<Fp, ProductionRank>> for TachygramSetPoly {
-    /// The realized (memoized) set polynomial.
-    ///
-    /// # Panics
-    ///
-    /// If the realization exceeds the polynomial coefficient cap.
-    fn as_ref(&self) -> &Polynomial<Fp, ProductionRank> {
-        self.0.realize()
-    }
-}
-
-impl AsRef<Polynomial<Fp, ProductionRank>> for ActionSetPoly {
-    /// The realized (memoized) set polynomial.
-    ///
-    /// # Panics
-    ///
-    /// If the realization exceeds the polynomial coefficient cap.
-    fn as_ref(&self) -> &Polynomial<Fp, ProductionRank> {
-        self.0.realize()
-    }
-}
+impl_factored_poly!(TachygramSetPoly);
+impl_factored_poly!(ActionSetPoly);
 
 impl FromIterator<ActionDigest> for ActionSetPoly {
     fn from_iter<I: IntoIterator<Item = ActionDigest>>(iter: I) -> Self {
@@ -193,14 +130,18 @@ mod tests {
     }
 
     #[test]
-    fn union_and_quotient_stay_in_set_form() {
+    fn the_operators_stay_in_set_form() {
         let rng = &mut StdRng::seed_from_u64(5);
         let left = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]);
         let right = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]);
 
-        let union = left.union(&right);
-        assert_eq!(union.quotient(&right), Some(left.clone()));
-        assert_eq!(union.quotient(&left), Some(right.clone()));
-        assert_eq!(left.quotient(&right), None);
+        let product = &left * &right;
+        assert_eq!(&product / &right, left);
+        assert_eq!(&product / &left, right);
+        assert_eq!(
+            &left / &right,
+            left,
+            "dividing by a factor that is not there takes nothing away"
+        );
     }
 }

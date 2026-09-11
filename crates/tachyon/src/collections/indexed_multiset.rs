@@ -74,9 +74,10 @@
 //! tuples *is* the polynomial, so [`IndexedMultiset`] keeps the tuples as its
 //! canonical representation and defers realization into coefficient form until
 //! [committed](IndexedMultiset::commit). Operating on the set form is much
-//! cheaper: union is a count merge rather than a coefficient convolution, the
-//! quotient witness is count subtraction rather than polynomial division, and
-//! evaluation streams over members without materializing coefficients.
+//! cheaper: a product is a count merge rather than a coefficient
+//! convolution, the quotient witness is count subtraction rather than
+//! polynomial division, and evaluation streams over members without
+//! materializing coefficients.
 
 #![allow(clippy::min_ident_chars, reason = "just for fun")]
 
@@ -140,10 +141,12 @@ fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
 /// // a contiguous run: consecutive indices zipped with their members.
 /// let window: IndexedMultiset = (epoch_start..).zip(nullifiers).collect();
 ///
-/// // set-form operations before realization: union merges multiplicities,
-/// // quotient subtracts them (`None` means "not a sub-multiset").
-/// let merged = window.union(&other);
-/// assert_eq!(merged.quotient(&other), Some(window));
+/// // set-form arithmetic before realization: a product merges
+/// // multiplicities, a quotient subtracts them.
+/// let mut merged = window.clone();
+/// merged.add_factors(&other);
+/// merged.rm_factors(&other);
+/// assert_eq!(merged, window);
 /// ```
 #[derive(Clone, Debug, Default)]
 pub(crate) struct IndexedMultiset {
@@ -182,18 +185,17 @@ impl IndexedMultiset {
         }
     }
 
-    /// Multiset union: adds the multiplicities of the two operands, matching
+    /// Multiset sum: adds `other`'s multiplicities to this one's, matching
     /// the product of their encoded polynomials.
     ///
     /// # Panics
     ///
     /// If one member's multiplicity exceeds `u32::MAX`, far beyond the
     /// realizable coefficient capacity.
-    #[must_use]
-    pub(crate) fn union(&self, other: &Self) -> Self {
-        let mut members = self.members.clone();
+    pub(crate) fn add_factors(&mut self, other: &Self) {
+        self.reset_memo();
         for (&key, &count) in &other.members {
-            match members.entry(key) {
+            match self.members.entry(key) {
                 Entry::Occupied(mut occupied) => {
                     #[expect(
                         clippy::expect_used,
@@ -210,37 +212,28 @@ impl IndexedMultiset {
                 },
             }
         }
-        Self {
-            members,
-            ..Self::default()
-        }
     }
 
-    /// Multiset difference `self \ divisor`: the quotient witness of the
-    /// encoded polynomials, computed by count subtraction instead of
-    /// polynomial division.
+    /// Multiset difference: subtracts `other`'s multiplicities from this
+    /// one's, the quotient of the encoded polynomials computed by count
+    /// subtraction instead of polynomial division.
     ///
-    /// Returns [`None`] when `divisor` is not a sub-multiset of `self`, in
-    /// which case no polynomial quotient exists either.
-    #[must_use]
-    pub(crate) fn quotient(&self, divisor: &Self) -> Option<Self> {
-        let mut members = self.members.clone();
-        for (&key, &needed) in &divisor.members {
-            let Entry::Occupied(mut occupied) = members.entry(key) else {
-                return None;
+    /// Saturating, so a member `other` holds more often than `self` does
+    /// leaves at zero. `other` divides `self` exactly when no such member
+    /// exists.
+    pub(crate) fn rm_factors(&mut self, other: &Self) {
+        self.reset_memo();
+        for (&key, &removed) in &other.members {
+            let Entry::Occupied(mut occupied) = self.members.entry(key) else {
+                continue;
             };
-            let remaining = occupied.get().get().checked_sub(needed.get())?;
-            match NonZero::new(remaining) {
+            match NonZero::new(occupied.get().get().saturating_sub(removed.get())) {
                 Some(count) => *occupied.get_mut() = count,
                 None => {
                     occupied.remove();
                 },
             }
         }
-        Some(Self {
-            members,
-            ..Self::default()
-        })
     }
 
     /// Evaluate the encoded polynomial at `x` by streaming over the members,
@@ -383,40 +376,58 @@ mod tests {
         }
     }
 
+    /// `self.add_factors(other)`, as an expression.
+    fn product(left: &IndexedMultiset, right: &IndexedMultiset) -> IndexedMultiset {
+        let mut product = left.clone();
+        product.add_factors(right);
+        product
+    }
+
+    /// `self.rm_factors(other)`, as an expression.
+    fn quotient(left: &IndexedMultiset, right: &IndexedMultiset) -> IndexedMultiset {
+        let mut quotient = left.clone();
+        quotient.rm_factors(right);
+        quotient
+    }
+
     #[test]
-    fn union_matches_realized_product() {
+    fn added_factors_match_the_realized_product() {
         let rng = &mut StdRng::seed_from_u64(17);
         let left = random_set(rng, 3);
         let right = random_set(rng, 4);
-        let union = left.union(&right);
+        let product = product(&left, &right);
         let x = Fp::random(&mut *rng);
-        assert_eq!(union.eval(x), left.eval(x) * right.eval(x));
-        assert_eq!(union.realize().eval(x), left.eval(x) * right.eval(x));
+        assert_eq!(product.eval(x), left.eval(x) * right.eval(x));
+        assert_eq!(product.realize().eval(x), left.eval(x) * right.eval(x));
     }
 
     #[test]
-    fn union_quotient_roundtrip() {
+    fn factor_arithmetic_roundtrips() {
         let rng = &mut StdRng::seed_from_u64(23);
         let seq = random_set(rng, 5);
         let complement = random_set(rng, 3);
-        let union = seq.union(&complement);
-        assert_eq!(union.quotient(&complement), Some(seq.clone()));
-        assert_eq!(union.quotient(&seq), Some(complement));
-        assert_eq!(union.quotient(&union), Some(IndexedMultiset::default()));
+        let product = product(&seq, &complement);
+        assert_eq!(quotient(&product, &complement), seq);
+        assert_eq!(quotient(&product, &seq), complement);
+        assert_eq!(quotient(&product, &product), IndexedMultiset::default());
     }
 
     #[test]
-    fn quotient_by_non_subset_is_none() {
+    fn removing_absent_factors_saturates() {
         let rng = &mut StdRng::seed_from_u64(29);
         let seq = random_set(rng, 4);
         let disjoint = random_set(rng, 2);
-        assert_eq!(seq.quotient(&disjoint), None);
+        assert_eq!(
+            quotient(&seq, &disjoint),
+            seq,
+            "a disjoint divisor takes nothing away"
+        );
 
-        // a divisor with excess multiplicity of a present member is not a
-        // sub-multiset either.
-        let doubled = seq.union(&seq);
-        assert_eq!(seq.quotient(&doubled), None);
-        assert_eq!(doubled.quotient(&seq), Some(seq));
+        // a divisor with excess multiplicity of a present member takes out
+        // only what is there.
+        let doubled = product(&seq, &seq);
+        assert_eq!(quotient(&seq, &doubled), IndexedMultiset::default());
+        assert_eq!(quotient(&doubled, &seq), seq);
     }
 
     #[test]
