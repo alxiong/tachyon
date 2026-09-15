@@ -95,11 +95,11 @@ fn spend_action_set(
 fn output_action_set(
     note: &Note,
     rcv: value::Trapdoor,
-    alpha: &ActionRandomizer<effect::Output>,
+    alpha: ActionRandomizer<effect::Output>,
 ) -> ActionSetPoly {
     let digest = ActionDigest::new(
         rcv.commit(-note.value),
-        private::ActionSigningKey::new(alpha).derive_action_public(),
+        private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
     .expect("action digest");
     ActionSetPoly::from_iter([digest])
@@ -516,7 +516,7 @@ fn step_accepts_zero_value_note() {
             .seed(rng, output::OutputBind, (zero_note,))
             .expect("bind of a zero-value note");
 
-        let action_set = output_action_set(&zero_note, out_rcv, &out_alpha);
+        let action_set = output_action_set(&zero_note, out_rcv, out_alpha);
         let tachygram_set = output_tachygram_set(&bind_pcd);
         PROOF_SYSTEM
             .fuse(
@@ -2148,7 +2148,8 @@ fn spend_bind_rejects_a_foreign_sequence() {
     );
 }
 
-/// A stamp accumulator not committing to the bound pair is rejected.
+/// `SpendStamp` rejects a tachygram set not committing to the bound nullifier
+/// pair.
 #[test]
 fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2175,7 +2176,7 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     );
 }
 
-/// An action set not committing to the derived action is rejected.
+/// `SpendStamp` rejects an action set not committing to the action it derives.
 #[test]
 fn spend_stamp_rejects_a_foreign_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2389,7 +2390,8 @@ fn output_bind_publishes_the_note_pair() {
     );
 }
 
-/// A stamp accumulator not committing to the bound pair is rejected.
+/// `OutputStamp` rejects a tachygram set not committing to the bound
+/// `{cm, pad}` pair.
 #[test]
 fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2402,7 +2404,7 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
 
     let (rcv, alpha, _plan) = build_output_plan(rng, note);
     let anchor = PoolSim::genesis(rng).anchor();
-    let action_set = output_action_set(&note, rcv, &alpha);
+    let action_set = output_action_set(&note, rcv, alpha);
     // A foreign tachygram in place of the bound pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
@@ -2439,7 +2441,7 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
 
     let (rcv, alpha, _plan) = build_output_plan(rng, other_note);
     let anchor = PoolSim::genesis(rng).anchor();
-    let action_set = output_action_set(&other_note, rcv, &alpha);
+    let action_set = output_action_set(&other_note, rcv, alpha);
     let tachygram_set = output_tachygram_set(&bind_pcd);
 
     let err = PROOF_SYSTEM
@@ -2461,7 +2463,7 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
     );
 }
 
-/// An action set not committing to the derived action is rejected.
+/// `OutputStamp` rejects an action set not committing to the action it derives.
 #[test]
 fn output_stamp_rejects_a_foreign_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2475,7 +2477,7 @@ fn output_stamp_rejects_a_foreign_action_set() {
     let (rcv, alpha, _plan) = build_output_plan(rng, note);
     let anchor = PoolSim::genesis(rng).anchor();
     // A different trapdoor yields a different cv, so a different digest.
-    let foreign = output_action_set(&note, value::Trapdoor::random(rng), &alpha);
+    let foreign = output_action_set(&note, value::Trapdoor::random(rng), alpha);
     let tachygram_set = output_tachygram_set(&bind_pcd);
 
     expect_invalid(

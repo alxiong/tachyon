@@ -631,7 +631,8 @@ impl ProofStamp {
             })?;
             ActionSetPoly::from_iter([digest])
         };
-        let tachygram_set = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+        let tachygram_set =
+            TachygramSetPoly::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,

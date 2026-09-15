@@ -104,10 +104,12 @@ pub(crate) fn enforce_poly_product(
 /// anything -- a header-bound value, a value derived in-circuit from bound
 /// values, or a free scalar bound by one of the step's other challenges. The
 /// call site states each root's pin.
-pub(crate) fn enforce_poly_roots(
+///
+/// `N` fixes the root count at compile time.
+pub(crate) fn enforce_poly_roots<const N: usize>(
     ctx: &mut StepCtx<'_>,
     accumulator: &Polynomial<Fp, ProductionRank>,
-    roots: &[Fp],
+    roots: &[Fp; N],
     err: &'static str,
 ) -> Result<()> {
     let accumulator_com = accumulator.commit(Pasta::host_generators(Pasta::baked()));

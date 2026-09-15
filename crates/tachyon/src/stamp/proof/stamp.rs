@@ -26,8 +26,8 @@ use crate::{
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
 /// the action-digest and tachygram sets. Each leaf step
 /// ([`OutputStamp`], [`SpendStamp`]) witnesses both set polynomials
-/// and enforces them against statement-fixed roots at a Fiat-Shamir
-/// challenge — the action set against the action the step derives,
+/// and enforces them against their roots at a Fiat-Shamir challenge.
+/// The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
 /// [`MergeStamp`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
@@ -44,10 +44,10 @@ impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
     /// are enforced at each producing step against that step's action
     /// and the left bind header's tachygram pair. `anchor` is freely
-    /// witnessed at
-    /// [`OutputStamp`], threaded from the left [`SpendHeader`] at
-    /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
-    /// advanced over an [`AnchorChain`] at [`StampLift`].
+    /// witnessed at [`OutputStamp`], threaded from the left
+    /// [`SpendHeader`] at [`SpendStamp`], equality-constrained at
+    /// [`MergeStamp`], or advanced over an [`AnchorChain`] at
+    /// [`StampLift`].
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(11);
@@ -69,6 +69,8 @@ impl Header for StampHeader {
 /// randomized action key `rk`, and enforces the one-action set plus the
 /// stamp accumulator over the two-element tachygram set `{cm, pad}` that
 /// [`OutputBind`](super::output::OutputBind) already settled.
+///
+/// Committed polynomials: `action_set`, `tachygram_set`; two oracles.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -115,7 +117,8 @@ impl Step for OutputStamp {
         })?;
 
         // The action-set commitment commits to exactly the one action this
-        // step derives; the root is in-circuit from the witnessed note above.
+        // step derives. `cv` carries the note's value; `rk` derives from
+        // `alpha` alone.
         enforce_poly_roots(
             ctx,
             action_set.as_ref(),
@@ -145,6 +148,8 @@ impl Step for OutputStamp {
 /// the stamp accumulator over the two-element tachygram set
 /// `{present_nf, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
 /// already confirmed against the covering derivation).
+///
+/// Committed polynomials: `action_set`, `tachygram_set`; two oracles.
 #[derive(Debug)]
 pub struct SpendStamp;
 
