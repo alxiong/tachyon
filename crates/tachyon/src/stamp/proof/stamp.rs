@@ -41,13 +41,7 @@ use crate::{
 pub struct StampHeader;
 
 impl Header for StampHeader {
-    /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
-    /// are enforced at each producing step against that step's action
-    /// and the left bind header's tachygram pair. `anchor` is freely
-    /// witnessed at [`OutputStamp`], threaded from the left
-    /// [`SpendHeader`] at [`SpendStamp`], equality-constrained at
-    /// [`MergeStamp`], or advanced over an [`AnchorChain`] at
-    /// [`StampLift`].
+    /// `(action_commit, stamp_tg_commit, anchor)`
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(11);
@@ -158,7 +152,7 @@ impl Step for SpendStamp {
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = ();
-    /// `(note, rcv, alpha, pak, action_set, tachygram_set)`.
+    /// `(note, rcv, alpha, pak, action_set, tachygram_set)`
     type Witness<'source> = (
         Note,
         value::Trapdoor,

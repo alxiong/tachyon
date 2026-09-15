@@ -33,7 +33,7 @@ use crate::{
     digest::blake2b,
     effect,
     entropy::ActionRandomizer,
-    keys::{ProofAuthorizingKey, private},
+    keys::ProofAuthorizingKey,
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
@@ -574,24 +574,13 @@ impl ProofStamp {
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
         let (cm, pad) = *bind_pcd.data();
+        #[expect(clippy::tuple_array_conversions, reason = "required")]
         let tachygrams = BTreeSet::from_iter([cm, pad]);
-
-        let action_set = {
-            let cv = rcv.commit(-note.value);
-            let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-            let digest = ActionDigest::new(cv, rk).map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "prove_output: action digest construction failed".into(),
-                )
-            })?;
-            ActionSetPoly::from_iter([digest])
-        };
-        let tachygram_set = TachygramSetPoly::from_iter([cm, pad]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             OutputStamp,
-            (rcv, alpha, note, anchor, action_set, tachygram_set),
+            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, note, anchor),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
@@ -621,23 +610,10 @@ impl ProofStamp {
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
 
-        let action_set = {
-            let cv = rcv.commit(note.value);
-            let rk = pak.ak.derive_action_public(&alpha);
-            let digest = ActionDigest::new(cv, rk).map_err(|_err| {
-                ragu_core::Error::InvalidWitness(
-                    "prove_spend: action digest construction failed".into(),
-                )
-            })?;
-            ActionSetPoly::from_iter([digest])
-        };
-        let tachygram_set =
-            TachygramSetPoly::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
-
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             SpendStamp,
-            (note, rcv, alpha, pak, action_set, tachygram_set),
+            witness::spend_stamp((*bind_pcd.data(), ()), note, rcv, alpha, pak),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
