@@ -261,24 +261,25 @@ range without any note-binding evidence: a valid syncing request may equally be
 a decoy list unrelated to any note. The user/wallet later binds the exclusion
 proof returned by the OSS to nullifiers derived from the actual note.
 
-The [leading candidate](./nf-analysis.md) evaluates several consecutive
+The [leading candidate](./nf-analysis.md) first derives the per-note master key
+$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$, then evaluates several consecutive
 nullifiers with one algebraic permutation:
 
 $$
 \nf_e = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lfloor e/\mathsf{Rate}\rfloor)[e\bmod\mathsf{Rate}].
+(\mk, \lfloor e/\mathsf{Rate}\rfloor)[e\bmod\mathsf{Rate}].
 $$
 
 For example, if a user wants to cover epoch $\{5,6\}$ with a sponge rate of
 $\mathsf{Rate}=4$, she would delegate the range $S=[5,7)$, a subrange of
 local derivation range $R=[4,8)$ realized by a single Poseidon squeeze:
 $\nf_4, \ldots, \nf_7 = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lfloor 6/4 \rfloor = 1)$.
+(\mk, \lfloor 6/4 \rfloor = 1)$.
 In practice, the delegation range may be larger, which requires the user
 multiple PCD steps to fully cover the whole $R$.
 
-> For the remaining presentation, $\nf_e=f_k(e)$ denotes any construction that
-> provides efficient batched evaluation and the required semantic security.
+> For the remaining presentation, $\nf_e=f_{\mk}(e)$ denotes any construction
+> that provides efficient batched evaluation and the required semantic security.
 
 #### Ranged Nullifier Commitment {#nf-flow}
 
@@ -323,7 +324,8 @@ the OSS.
 
 Here is our concrete construction.
 
-Let $\nf_i=f_k(i), k=\mathsf{KDF}(\nk,\psi)$
+Let $\nf_i=f_{\mk}(i)$ for
+$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$,
 where evaluations outside any revealed set remain computationally
 indistinguishable from random. To bind both an epoch position and its value, fix
 a *non-cubic residue* $c\in\F$ and encode $(i,\nf_i)$ as the cubic factor
@@ -414,8 +416,10 @@ out](#decouple) for the shielded protocol. Readers can safely skip this
 section and come back later since the analysis refers to concepts introduced
 in later sections.
 
-**Balance.** Only the holder of $\nk$ can compute any $\nf_e=f_k(e)$, since
-$k=\mathsf{KDF}(\nk,\psi)$ requires it. A spend proof pins both $\nf_e$ and
+**Balance.** Only the holder of $\nk$ can compute any
+$\nf_e=f_{\mk}(e)$, since
+$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$ requires it. A spend proof pins both
+$\nf_e$ and
 $\nf_{e+1}$ to a deterministic function of the note and epoch, so a note has
 exactly one valid nullifier per epoch and no freedom to mint a fresh value that
 dodges a past spend. Double-spending is ruled out by two complementary checks:
@@ -426,7 +430,8 @@ nullifiers makes those checks overlap across an epoch boundary.
 **Note Privacy.** The adversary is a keyless third party reading the whole
 on-chain transaction, including any in-band memo. The shielded footprint, namely
 the commitment $\cm$ (hidden by $\rcm$), the spend's revealed nullifiers (pseudorandom
-by the semantic security of $f_k$), the rerandomized $\rk$, and the hiding $\cv$,
+by the semantic security of $f_{\mk}$), the rerandomized $\rk$, and the hiding
+$\cv$,
 reveals none of $\pk$, $v$, $\psi$. The in-band memo is payment-protocol data
 that the shielded protocol carries opaquely and never parses (committed only to
 `da_digest`), so its secrecy rests on the payment protocol's encryption, not on
@@ -434,15 +439,16 @@ the shielded core.
 
 **Note Privacy (OOB).** Here the note plaintext travels out of band rather than
 as an in-band ciphertext, so the adversary of concern is the sender, who learns
-$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e=f_k(e)$
-hangs off the nullifier key $k = \mathsf{KDF}(\nk, \psi)$, which cannot be formed
+$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every
+$\nf_e=f_{\mk}(e)$ hangs off the master key
+$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$, which cannot be formed
 without $\nk$, knowledge of the note plaintext alone does
 not let the sender, or anyone it colludes with, recognize the recipient's
 eventual spend on chain or link it back to the note it sent.
 
 **Spend Unlinkability.** Across epochs the $\{\nf_e\}$ of a fixed note are
 mutually pseudorandom to anyone lacking $\nk$: by the semantic security of
-$f_k$, any set of revealed evaluations leaves every evaluation outside it
+$f_{\mk}$, any set of revealed evaluations leaves every evaluation outside it
 indistinguishable from random, and this holds even for the pair
 $\nf_e, \nf_{e+1}$ revealed together at spend. Delegation is *list-bounded*: an
 OSS [delegated](#nf) a set $S$ holds the explicit evaluations
@@ -452,10 +458,10 @@ It sees the public history segments assigned to it, but not the note commitment,
 the user's note-binding proof, or the eventual spend endpoint. Range
 standardization, decoys, and local continuation can therefore keep maintenance
 and imminent-spend requests in the same cryptographic shape.
-And since $k$ binds the per-note $\psi$, a list delegated for one note reveals
-nothing about any other note the user owns. To an attacker holding only the on-chain
-$\cm$, the spend is unlinkable to it, since the two draw on disjoint randomness
-($\rcm$ versus $k$). The stronger flavor of spend unlinkability, under
+And since $\mk$ binds the per-note $\psi$, a list delegated for one note reveals
+nothing about any other note the user owns. To an attacker holding only the
+on-chain $\cm$, the spend is unlinkable to it, since the two draw on disjoint randomness
+($\rcm$ versus $\mk$). The stronger flavor of spend unlinkability, under
 incoming viewing key access, falls to the payment protocol, since Tachyon's
 shielded core has no $\ivk$.
 
@@ -1156,12 +1162,12 @@ almost-uniform profile partition.[^qr-correlation]
     fixed input uniformly, expected bucket loads are correspondingly balanced;
     for $k=32$ in the protocol field, the relative deviation is negligible.
 
-**Queries and cost.** After the epoch closes, a service reveals $R_0$ and
-publishes all full-epoch final buckets. To query $\tg$, a consumer derives
-successive discriminants and profile bits until they select a final profile. It
-then tests $q_\v{b}(\tg)=0$ for membership or $q_\v{b}(\tg)\neq 0$ for
-non-membership against that one bucket. Routing processes a tachygram once per
-depth it traverses; this one-time work is amortized across later queries.
+**Queries and cost.** After the epoch closes, a service reveals $R_0$. A consumer
+authenticates one full-epoch final-bucket opening. For membership, it directly
+tests $q_\v{b}(\tg)=0$ without deriving $\tg$'s profile. For non-membership, it
+derives successive discriminants and profile bits, checks that they select the
+opened bucket, and tests $q_\v{b}(\tg)\neq 0$. Routing processes a tachygram once
+per depth it traverses; this one-time work is amortized across later queries.
 
 A 32-bit profile is sufficient for our intended scale. Even at $50K$
 two-input-two-output transactions ($8$ tachygrams each) per second for a two-week
@@ -1200,11 +1206,11 @@ It only needs to contain the bucket used by a query. The OSS retains its chosen
 final buckets, their Merkle tree, and one proof for the root. A query supplies
 the selected leaf and its Merkle path rather than the bucket's original routing
 proof. After authenticating the leaf against the tree root, the consumer derives
-the claimed profile from $(R_0,j)$, checks its encoding $b$, and performs the
-same polynomial membership or non-membership test as before. This layer does
-not replace or alter routing: it only compresses a set of already proven
-buckets into one reusable certificate. Since routing runs in flight, tree
-construction is the only post-epoch work on the critical path.
+and checks the claimed profile only for non-membership; membership directly
+checks that the queried value is a root. This layer does not replace or alter
+routing: it only compresses a set of already proven buckets into one reusable
+certificate. Since routing runs in flight, tree construction is the only
+post-epoch work on the critical path.
 
 ### Transaction Life Cycle {#txflow}
 
@@ -1492,16 +1498,17 @@ such that the following conditions hold:
     history links the creation stamp to the target $\anchor$.
 - **Past Nullifier Exclusion**: for every complete past epoch
   $i\in[e_\incl,e)$, the nullifier never appears in that epoch's tachygrams:
-  - **Past nullifier derivation**: $k=\mathsf{KDF}(\nk,\psi)$ and
-    $\nf_i=f_k(i)$.
+  - **Past nullifier derivation**:
+    $\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$ and
+    $\nf_i=f_{\mk}(i)$.
   - **Nullifier nonmembership**: the routed full-epoch accumulator selected by
     $\nf_i$'s profile evaluates nonzero at $\nf_i$.
   - **Tachygram integrity**: its certificate binds the accumulator to all
     authenticated stamps between $\sntl_i$ and $\sntl_{i+1}$.
 - **Spend-time Nullifier Integrity**: $\nf_e$ and $\nf_{e+1}$ are this note's
   [nullifiers](#nf) at epochs $e,e+1$, derived from
-  $k=\mathsf{KDF}(\nk,\psi)$ and therefore bound to $\cm$; both are constrained
-  nonzero.[^nonzero]
+  $\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$ and therefore bound to $\cm$; both are
+  constrained nonzero.[^nonzero]
 
 #### Bundle-level Statement {#bundle}
 
@@ -1824,12 +1831,14 @@ $$
   \mathsf{Com}(q_b(X))\}.
 $$
 
-This step performs only leaf authentication. A consuming query step then
-derives the first $j$ discriminants from $R_0$, checks that the QR
-classifications of $x$ encode $b$, and opens $q_b$ at $x$ for membership or
-non-membership. Every non-residue profile bit also requires $x+R_i\neq0$.
-Separating the Merkle path from profile derivation and the polynomial query
-keeps both steps bounded.
+This step performs only leaf authentication. A membership consumer directly
+checks $q_b(x)=0$: every authenticated bucket polynomial divides the full-epoch
+tachygram polynomial, so any root is a tachygram published in that epoch and no
+profile check is needed. A non-membership consumer must additionally derive the
+first $j$ discriminants from $R_0$, check that the QR classifications of $x$
+encode $b$, and then check $q_b(x)\neq0$; every non-residue profile bit also
+requires $x+R_i\neq0$. Separating the Merkle path from profile derivation and
+the polynomial query keeps both steps bounded.
 
 ```mermaid
 flowchart TB
@@ -1959,8 +1968,8 @@ $$
 \begin{aligned}
 \pk&=\mathsf{Com}(\ak,\nk),&
 \cm&=\mathsf{Com}(\pk,v,\psi;\rcm),\\
-k&=\mathsf{KDF}(\nk,\psi),&
-\nf_{e_\incl}&=f_k(e_\incl).
+\mk&=\mathsf{Poseidon}^{\mk}(\nk,\psi),&
+\nf_{e_\incl}&=f_{\mk}(e_\incl).
 \end{aligned}
 $$
 
@@ -1983,9 +1992,10 @@ for delegated, extensible later ranges.
 
 $\mathsf{SpendableReinit}$ consumes the singleton $\mathtt{VerifiedUnspent}$ and
 the independent $\cm$ bucket opening. It requires the same epoch and sentinel
-endpoints, carries $\cm$ from the verified header, derives its complete QR
-profile, and proves $q_{b'}(\cm)=0$. It does not reopen the note, derive or test
-a nullifier, or consume anchor-chain evidence. It emits the fully established
+endpoints, carries $\cm$ from the verified header, and proves
+$q_{b'}(\cm)=0$ without deriving or checking $\cm$'s profile. It does not reopen
+the note, derive or test a nullifier, or consume anchor-chain evidence. It emits
+the fully established
 
 $$
 \mathtt{Spendable}\{\cm,e_\incl+1,\sntl_{e_\incl+1}\}.
@@ -1995,79 +2005,119 @@ $$
 %%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 25, "padding": 5}}}%%
 flowchart TB
   classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
-  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
   vfyincl["$$\mathtt{VerifiedUnspent}\\ \{\cm,e_\incl,e_\incl+1,\sntl_{e_\incl},\sntl_{e_\incl+1}\}$$"]:::u
-  vfylater["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
-  nf["$$\mathtt{Nullifiers}\\ \{\cm,k,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
-  unspent["$$\mathtt{Unspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
-  unspentprime["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
   inclTree["$$\mathtt{QrBucketTree}_{e_\incl}$$"]:::s
-  laterTree["$$\mathtt{QrBucketTree}_i$$"]:::s
   inclNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_{e_\incl}$$"]:::s
-  laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
   cmBucket["$$\mathtt{QrBucketOpening}\text{ for }\cm$$"]:::s
   spendable["$$\mathtt{Spendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
+
+  VerifiedUnspentInit(["$$\mathsf{VerifiedUnspentInit}$$"]):::u
+  SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
+  OpenInclNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
+  OpenCm(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
+
+  inclTree --> OpenInclNf --> inclNfBucket
+  inclTree --> OpenCm --> cmBucket
+  inclNfBucket --> VerifiedUnspentInit --> vfyincl
+  vfyincl --> SpendableReinit --> spendable
+  cmBucket --> SpendableReinit
+```
+
+Later exclusion ranges extend that reinitialized $\mathtt{Spendable}$:
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 25, "padding": 5}}}%%
+flowchart TB
+  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
+
+  spendable["$$\mathtt{Spendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
+  nfmaster["$$\mathtt{NfMaster}\\ \{\cm,\mk\}$$"]:::u
+  nfwindowA["$$\mathtt{Nullifiers}_A$$"]:::u
+  nfwindowB["$$\mathtt{Nullifiers}_B$$"]:::u
+  nf["$$\mathtt{Nullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
+  unspent["$$\mathtt{Unspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
+  unspentprime["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
+  laterTree["$$\mathtt{QrBucketTree}_i$$"]:::s
+  laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
+  vfylater["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
   spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
 
   UnspentSeed(["$$\mathsf{UnspentSeed}$$"]):::o
   UnspentLift(["$$\mathsf{UnspentLift}$$"]):::o
-  NullifierDerive(["$$\mathsf{NullifierDerive}$$"]):::u
-  VerifiedUnspentInit(["$$\mathsf{VerifiedUnspentInit}$$"]):::u
+  NfMasterSeed(["$$\mathsf{NfMasterSeed}$$"]):::u
+  NullifierDeriveA(["$$\mathsf{NullifierDerive}$$"]):::u
+  NullifierDeriveB(["$$\mathsf{NullifierDerive}$$"]):::u
+  NullifierFuse(["$$\mathsf{NullifierFuse}$$"]):::u
   UnspentBind(["$$\mathsf{UnspentBind}$$"]):::u
-  SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
+  OpenLaterNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
   SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
-  OpenInclNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
-  OpenLaterNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
-  OpenCm(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
 
-  UnspentSeed --> unspent
-  inclTree --> OpenInclNf --> inclNfBucket
-  laterTree --> OpenLaterNf --> laterNfBucket
-  inclTree --> OpenCm --> cmBucket
-  unspent --> UnspentLift --> unspentprime
-  laterNfBucket --> UnspentLift
-  UnspentBind --> vfylater
-  nf --> NullifierDerive --> nf
-  inclNfBucket --> VerifiedUnspentInit --> vfyincl
-  unspentprime --> UnspentBind
+  NfMasterSeed --> nfmaster
+  nfmaster --> NullifierDeriveA --> nfwindowA --> NullifierFuse
+  nfmaster --> NullifierDeriveB --> nfwindowB --> NullifierFuse
+  NullifierFuse --> nf
+  UnspentSeed --> unspent --> UnspentLift --> unspentprime --> UnspentBind --> vfylater
+  laterTree --> OpenLaterNf --> laterNfBucket --> UnspentLift
   nf --> UnspentBind
-  vfyincl --> SpendableReinit --> spendable
-  cmBucket --> SpendableReinit
   spendable --> SpendableLift --> spendableprime
   vfylater --> SpendableLift
   spendableprime --> SpendBind --> spendstamp
-
 ```
 
-$\mathsf{NullifierDerive}$ has an explicit base and continuation relation. The
-base reopens one note, enforces $\pk=\mathsf{Com}(\ak,\nk)$, recomputes
-$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and $k=\mathsf{KDF}(\nk,\psi)$, chooses the
-left endpoint $r_L$, and emits
+$\mathsf{NfMasterSeed}$ reopens one note, enforces
+$\pk=\mathsf{Com}(\ak,\nk)$, and recomputes
+$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and
+$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$. It emits the
+reusable wallet-local header
 
 $$
-\mathtt{Nullifiers}\{\cm,k,r_L,r_L,\mathsf{Com}(1)\}.
+\mathtt{NfMaster}\{\cm,\mk\}.
 $$
 
-A continuation preserves $(\cm,k,r_L)$, derives
-$\nf_{r_R}=f_k(r_R)$, increments the right endpoint, and appends the
-[indexed factor $F_{i,\nf_i}(X)$](#nf-flow):
+Each $\mathsf{NullifierDerive}$ consumes that header and derives one bounded
+window. Let $G\geq1$ be the circuit's fixed number of sponge groups and
+$W=G\cdot\mathsf{Rate}$. The step witnesses a group-aligned start
+$r_L\bmod\mathsf{Rate}=0$, sets $r_R=r_L+W$, evaluates the batched nullifier
+construction once per group, and commits to
 
 $$
-g_{r_L,r_R+1}(X)=g_{r_L,r_R}(X)\cdot F_{r_R,\nf_{r_R}}(X).
+g_{r_L,r_R}(X)=\prod_{i=r_L}^{r_R-1}F_{i,\nf_i}(X).
 $$
 
-The old and new commitments are fixed before the random-point product check.
-These invariants make every header commit to exactly the consecutive range
-$[r_L,r_R)$ derived from one note.
+The commitment is fixed before a fresh challenge $z$, after which one opening is
+checked against the same product evaluated directly from the in-circuit batched
+outputs. The step emits
+
+$$
+\mathtt{Nullifiers}\{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}.
+$$
+
+$G$ is an implementation parameter rather than part of the nullifier
+construction; for example, $G=4$ covers sixteen epochs when
+$\mathsf{Rate}=4$.
+
+$\mathsf{NullifierFuse}$ combines two windows carrying the same $\cm$. For
+ranges $[r_L,r_M)$ and $[r_M,r_R)$, it checks the shared endpoint and proves
+
+$$
+g_{r_L,r_R}(z)=g_{r_L,r_M}(z)\cdot g_{r_M,r_R}(z)
+$$
+
+after all three commitments are fixed. It emits their union over $[r_L,r_R)$.
+Repeated fuses therefore build any consecutive locally derived range from
+bounded batched steps.
 
 Later past exclusion is built independently. $\mathsf{NullifierDerive}$ derives
-a consecutive local range from the note and extends its [ranged nullifier
-commitment](#nf-flow). The wallet may give the OSS the relevant opaque pairs
-$(i,\nf_i)$, but no note-opening data. An $\mathtt{Unspent}$ header has the form
+bounded local windows from the note and $\mathsf{NullifierFuse}$ combines them
+into a [ranged nullifier commitment](#nf-flow). The wallet may give the OSS the
+relevant opaque pairs $(i,\nf_i)$, but no note-opening data. An
+$\mathtt{Unspent}$ header has the form
 
 $$
 \mathtt{Unspent}\{s_L,s_R,\sntl_{s_L},\sntl_{s_R},
@@ -2130,7 +2180,8 @@ in-epoch stamp lift are unchanged and therefore omitted from the diagram.
 #### Delegation Extension and Multiple OSSs {#extend-range}
 The singleton inclusion-epoch $\mathtt{VerifiedUnspent}$ is built and consumed
 separately at reinitialization. Beyond it, both branches remain extendable. The
-wallet extends its local commitment by applying $\mathsf{NullifierDerive}$ again;
+wallet derives another local window and combines it with
+$\mathsf{NullifierFuse}$;
 an OSS extends a range beginning no earlier than $e_\incl+1$ by applying
 $\mathsf{QrBucketTreeOpen}$ and $\mathsf{UnspentLift}$ to the next full-epoch tree.
 That later range need not fix its final endpoint in advance.
@@ -2172,7 +2223,7 @@ flowchart TB
   left["$$A:\ \mathtt{Unspent}\\ \{s_L,s_M,\sntl_{s_L},\sntl_{s_M},\mathsf{Com}(g_{s_L,s_M})\}$$"]:::o
   right["$$B:\ \mathtt{Unspent}\\ \{s_M,s_R,\sntl_{s_M},\sntl_{s_R},\mathsf{Com}(g_{s_M,s_R})\}$$"]:::o
   merged["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
-  nf["$$\mathtt{Nullifiers}\\ \{\cm,k,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}$$"]:::u
+  nf["$$\mathtt{Nullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}$$"]:::u
   verified["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
 
   UnspentMerge(["$$\mathsf{UnspentMerge}$$"]):::u
@@ -2554,7 +2605,7 @@ notes, a wallet:
    $\mathsf{VerifiedUnspentInit}$, then joins that singleton exclusion with the
    separate $\cm$ bucket opening at $\mathsf{SpendableReinit}$; later lifts
    consume ranges beginning at $e_\incl+1$; and
-4. folds the updated spends and reusable anchorless outputs into a fresh
+4. folds the updated spends and spend-time outputs into a fresh
    [stamp](#tx), advances it with active $\mathtt{AnchorChain}$ evidence if
    needed, then performs authorization.
 

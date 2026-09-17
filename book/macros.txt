@@ -25,6 +25,7 @@
 \bvk:\mathsf{bvk}
 \ivk:\mathsf{ivk}
 \nk:\mathsf{nk}
+\mk:\mathsf{mk}
 \seed:\mathsf{seed}
 \nf:\mathsf{nf}
 \incl:\mathsf{incl}
