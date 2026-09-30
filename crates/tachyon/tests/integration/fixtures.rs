@@ -26,7 +26,7 @@ use zcash_tachyon::{
         PointerStamp, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, delegation, pool, qr, spendable,
-            stamp::{MergeStamp, StampHeader},
+            stamp::{Stamp, StampMerge},
             summary,
         },
     },
@@ -177,17 +177,17 @@ pub fn build_autonome<RNG: CryptoRng>(
 
 /// An honest prover will not merge intersecting stamps.
 ///
-/// However, `MergeStamp` actually handles a commitment scheme that represents a
+/// However, `StampMerge` actually handles a commitment scheme that represents a
 /// multiset, and proves a relationship equivalent to a multiset union. So, a
 /// dishonest prover can feasibly prove a merge that violates consensus rules.
 ///
 /// Normal tools in this crate don't allow you to carry out such operations, so
-/// this utility will fuse a `MergeStamp` without checking for intersection.
+/// this utility will fuse a `StampMerge` without checking for intersection.
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
     (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
     (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
-) -> Pcd<StampHeader> {
+) -> Pcd<Stamp> {
     let left_acts = descriptors_a
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
@@ -207,12 +207,12 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         left_acts.commit(),
         left_tg.commit(),
         stamp_a.anchor,
     ));
-    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
         right_acts.commit(),
         right_tg.commit(),
         stamp_b.anchor,
@@ -233,7 +233,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            MergeStamp,
+            StampMerge,
             (
                 (left_acts, left_tg),
                 (merged_acts, merged_tg),
@@ -314,7 +314,7 @@ impl PoolSimBlock {
         }
     }
 
-    /// The block's terminal anchor: its last stamp's, or its entry anchor
+    /// The block's final anchor: its last stamp's, or its entry anchor
     /// unchanged when the block published no stamp.
     pub fn anchor(&self) -> Anchor {
         match self.stamps.last() {
@@ -361,11 +361,11 @@ impl PoolSim {
     /// Append a block entered at `prev`, indexing the cursor each of its
     /// anchors opens. An epoch-first block's entry anchor is the epoch lift's
     /// product and so is indexed too; any other entry anchor is the previous
-    /// block's terminal, already indexed there.
+    /// block's final anchor, which is already indexed.
     fn push_block(&mut self, prev: Anchor, stamps: Vec<Vec<Tachygram>>) {
         let height = BlockHeight::from(self.history.len());
         let block = PoolSimBlock::new(prev, height, stamps);
-        if height.is_epoch_first() {
+        if height.is_first_in_epoch() {
             self.anchor_index.insert(prev, (height, 0));
         }
         for (position, &(_prev_anchor, _, _, anchor)) in block.stamps.iter().enumerate() {
@@ -388,7 +388,7 @@ impl PoolSim {
     /// order. Either endpoint may sit mid-block.
     ///
     /// The walk asserts the links chain, which is what keeps an epoch boundary
-    /// out of the span: a boundary tick advances the anchor without publishing
+    /// out of the span: a crossing advances the anchor without publishing
     /// a stamp, so no run of stamps spans one.
     pub fn stamps_between(&self, start: Anchor, end: Anchor) -> Vec<&StampEntry> {
         // The cursor an endpoint opens: its block, and that block's first stamp
@@ -454,9 +454,9 @@ impl PoolSim {
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
         let new_height = BlockHeight::from(self.history.len());
         let old_tip = self.anchor();
-        // Epoch-first blocks are preceded by a boundary anchor lift;
-        // intra-epoch blocks advance directly from the previous tip.
-        let prev = if new_height.is_epoch_first() {
+        // Epoch-first blocks are preceded by an entry anchor lift;
+        // intra-epoch blocks advance directly from the previous block's anchor.
+        let prev = if new_height.is_first_in_epoch() {
             old_tip.next_epoch(new_height.epoch()).unwrap()
         } else {
             old_tip
@@ -575,13 +575,14 @@ pub(crate) struct QrBucketEntry {
     pub members: Vec<Tachygram>,
 }
 
-/// Seal `intake`; `prev_last` is the terminal anchor of the preceding epoch.
+/// Seal `intake`; `anchor_final_prev` is the final anchor of the
+/// preceding epoch.
 pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
     intake: QrIntakeEntry,
-    prev_last: Anchor,
+    anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
-    let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), prev_last);
+    let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), anchor_final_prev);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -597,12 +598,12 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
     }
 }
 
-/// The discriminant an epoch's buckets carry: the closing boundary anchor
-/// its terminal anchor `terminal` ticks to.
-pub(crate) fn qr_discriminant_of(pool: &PoolSim, terminal: Anchor) -> QrDiscriminant {
-    terminal
-        .next_epoch(pool.epoch_at(terminal).next().unwrap())
-        .expect("epoch after the terminal is nonzero")
+/// The discriminant an epoch's buckets carry: the epoch link of its final
+/// anchor `final` into the next epoch.
+pub(crate) fn qr_discriminant_of(pool: &PoolSim, final_anchor: Anchor) -> QrDiscriminant {
+    final_anchor
+        .next_epoch(pool.epoch_at(final_anchor).next().unwrap())
+        .expect("epoch after the final is nonzero")
         .into()
 }
 
@@ -669,16 +670,16 @@ fn build_qr_roots<RNG: CryptoRng>(
             continue;
         }
         let (summary, members) = build_summary_pcd(rng, pool, (first.0, last.3));
-        let witness = witness::qr_summary_intake_init((*summary.data(), ()), discriminant);
+        let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                qr::QrSummaryIntakeInit,
+                qr::QrSummaryIntake,
                 witness,
                 summary,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("QrSummaryIntakeInit");
+            .expect("QrSummaryIntake");
         roots.push(QrIntakeEntry { pcd, members });
     }
     roots
@@ -733,12 +734,12 @@ fn merge_qr_run<RNG: CryptoRng>(
     merged
 }
 
-/// Split one intake and descend into both sides.
+/// Split one intake and descend into both sides, NQR first.
 pub(crate) fn split_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
     intake: QrIntakeEntry,
 ) -> (QrIntakeEntry, QrIntakeEntry) {
-    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = *intake.pcd.data();
+    let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = *intake.pcd.data();
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -771,9 +772,9 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             .expect("QrSideDescend");
         QrIntakeEntry { pcd, members }
     };
-    let residue = descend(true);
     let non_residue = descend(false);
-    (residue, non_residue)
+    let residue = descend(true);
+    (non_residue, residue)
 }
 
 /// Route the anchor span `(start, end)`'s tachygrams to `depth`, over intakes
@@ -796,9 +797,9 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
         let mut residue = Vec::new();
         let mut non_residue = Vec::new();
         for intake in layer {
-            let (left, right) = split_qr_intake(rng, intake);
-            residue.push(left);
-            non_residue.push(right);
+            let (nqr_side, qr_side) = split_qr_intake(rng, intake);
+            non_residue.push(nqr_side);
+            residue.push(qr_side);
         }
         layer = merge_qr_run(rng, residue, capacity);
         layer.extend(merge_qr_run(rng, non_residue, capacity));
@@ -826,7 +827,7 @@ pub(crate) fn build_qr_branch<RNG: CryptoRng>(
         let side = qr::classify(value, discriminant.at(level)).0;
         let mut kept = Vec::with_capacity(layer.len());
         for intake in layer {
-            let (residue, non_residue) = split_qr_intake(rng, intake);
+            let (non_residue, residue) = split_qr_intake(rng, intake);
             kept.push(if side { residue } else { non_residue });
         }
         layer = merge_qr_run(rng, kept, capacity);
@@ -896,7 +897,7 @@ fn nf_at(nf: &[Nullifier], base: EpochIndex, epoch: EpochIndex) -> Nullifier {
 ///
 /// Every epoch boundary the span crosses gets an
 /// [`EndEpochUnspentSeed`](pool::EndEpochUnspentSeed) leaf spanning the
-/// boundary tick, seeded from the leaving epoch's terminal anchor.
+/// crossing, seeded from the leaving epoch's final anchor.
 pub(crate) fn build_unspent_pcd_between_anchors<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
@@ -944,10 +945,10 @@ pub(crate) fn build_unspent_pcd_between_anchors<RNG: CryptoRng>(
         })
         .flat_map(|(epoch, crossing, stamps)| {
             let epoch_nf = nf_at(nf, base_epoch, epoch);
-            let crossing_leaf = crossing.map(|(leaving, terminal)| {
+            let crossing_leaf = crossing.map(|(leaving, final_anchor)| {
                 let witness = witness::end_epoch_unspent_seed(
                     ((), ()),
-                    terminal,
+                    final_anchor,
                     leaving,
                     nf_at(nf, base_epoch, leaving),
                     epoch_nf,
@@ -979,7 +980,7 @@ pub(crate) fn build_unspent_pcd_between_anchors<RNG: CryptoRng>(
 /// ([`UnspentFuse`]). Every seam is a shared junction, since a boundary is
 /// itself a chain link. Everything a seam needs is read off the halves'
 /// headers; a chain's member slice is
-/// `nf[epoch_start - base..=epoch_last - base]` (one nullifier per covered
+/// `nf[epoch_start - base..=epoch_end - base]` (one nullifier per covered
 /// epoch).
 fn fuse_unspent_tree<RNG: CryptoRng>(
     rng: &mut RNG,
@@ -1000,13 +1001,13 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
         let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
         &nf[from..=to]
     };
-    let (_, (left_epoch_start, _), _, (left_epoch_last, _), _) = *left.data();
-    let (_, (right_epoch_start, _), _, (right_epoch_last, _), _) = *right.data();
-    let left_el = elapsed_slice(left_epoch_start, left_epoch_last);
-    let right_el = elapsed_slice(right_epoch_start, right_epoch_last);
+    let (_, (left_epoch_start, _), _, (left_epoch_end, _), _) = *left.data();
+    let (_, (right_epoch_start, _), _, (right_epoch_end, _), _) = *right.data();
+    let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
+    let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
     assert_eq!(
         u32::from(right_epoch_start),
-        u32::from(left_epoch_last),
+        u32::from(left_epoch_end),
         "fused chains must meet inside one epoch"
     );
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
@@ -1051,11 +1052,11 @@ pub struct WalletSim {
     /// draws of other values never shift a stream's position.
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
     /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
-    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NfMasterHeader>>>,
+    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteMaster>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
-    /// epoch_last)`: repeated derivations of the same exact range share the
+    /// epoch_end)`: repeated derivations of the same exact range share the
     /// proof.
-    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NullifierDerivation>>>,
+    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NoteNullifiers>>>,
 }
 
 impl WalletSim {
@@ -1103,7 +1104,7 @@ impl WalletSim {
     pub fn covering_window(
         &self,
         note: &Note,
-        range: &Pcd<delegation::NullifierDerivation>,
+        range: &Pcd<delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
         let (_, start, _, last) = *range.data();
         (u32::from(start)..=u32::from(last))
@@ -1121,7 +1122,7 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         note: Note,
-    ) -> Pcd<delegation::NfMasterHeader> {
+    ) -> Pcd<delegation::NoteMaster> {
         let cm = Tachygram::from(note.commitment());
         if let Some(pcd) = self.masters.borrow().get(&cm) {
             return pcd.clone();
@@ -1129,16 +1130,16 @@ impl WalletSim {
         let (pcd, ()) = PROOF_SYSTEM
             .seed(
                 rng,
-                delegation::NfMasterSeed,
-                witness::nf_master_seed(((), ()), note, self.pak),
+                delegation::NoteSeed,
+                witness::note_seed(((), ()), note, self.pak),
             )
-            .expect("NfMasterSeed");
+            .expect("NoteSeed");
 
         self.masters.borrow_mut().insert(cm, pcd.clone());
         pcd
     }
 
-    /// The certified derivation PCD covering `[epoch_start, epoch_last]`,
+    /// The certified derivation PCD covering `[epoch_start, epoch_end]`,
     /// built from whole windows and cached by the covering range.
     ///
     /// The first window is the one opened by `epoch_start`'s group; further
@@ -1150,39 +1151,38 @@ impl WalletSim {
         rng: &mut RNG,
         note: Note,
         epoch_start: EpochIndex,
-        epoch_last: EpochIndex,
-    ) -> Pcd<delegation::NullifierDerivation> {
+        epoch_end: EpochIndex,
+    ) -> Pcd<delegation::NoteNullifiers> {
         let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
-        let windows = (u32::from(epoch_last) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
-        let cover_last = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
-        let key = (Tachygram::from(note.commitment()), base, cover_last);
+        let windows = (u32::from(epoch_end) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
+        let cover_end = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
+        let key = (Tachygram::from(note.commitment()), base, cover_end);
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
         let master = self.master_pcd(rng, note);
 
-        let mut merged: Option<Pcd<delegation::NullifierDerivation>> = None;
+        let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
-            let chunk_last =
+            let chunk_end =
                 EpochIndex::new(u32::from(chunk_start) + NF_DERIVATION_WIDTH as u32 - 1);
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    delegation::NfDerive,
-                    witness::nf_derive((*master.data(), ()), chunk_start),
+                    delegation::NullifierDerive,
+                    witness::nullifier_derive((*master.data(), ()), chunk_start),
                     master.clone(),
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("NfDerive");
+                .expect("NullifierDerive");
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {
                     let left_nfs: Vec<Nullifier> = (base..u32::from(chunk_start))
                         .map(|epoch| self.nf_at(&note, EpochIndex::new(epoch)))
                         .collect();
-                    let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)
-                        ..=u32::from(chunk_last))
+                    let right_nfs: Vec<Nullifier> = (u32::from(chunk_start)..=u32::from(chunk_end))
                         .map(|epoch| self.nf_at(&note, EpochIndex::new(epoch)))
                         .collect();
                     let (fused, ()) = PROOF_SYSTEM
@@ -1214,10 +1214,10 @@ impl WalletSim {
         note: &Note,
         pool: &PoolSim,
         init_height: BlockHeight,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
-        let (pre_cm_anchor, creation_tgs) = {
+        let (anchor_prev, creation_tgs) = {
             let stamps = pool.block(init_height).tachygrams();
             let stamp_commits = pool.block(init_height).stamp_commits();
             let cm_idx = stamps
@@ -1226,13 +1226,13 @@ impl WalletSim {
                 .expect("cm not found in any stamp at the cm-block");
 
             // Anchor immediately before the cm-stamp (the cm-block prefix fold).
-            let pre_cm_anchor = stamp_commits[..cm_idx]
+            let anchor_prev = stamp_commits[..cm_idx]
                 .iter()
                 .fold(pool.block(init_height).prev, |anchor, commit| {
                     anchor.next_stamp(init_height.epoch(), commit).unwrap()
                 });
 
-            (pre_cm_anchor, stamps[cm_idx].clone())
+            (anchor_prev, stamps[cm_idx].clone())
         };
         let deriv = self.derivation_pcd(rng, *note, epoch, epoch);
 
@@ -1242,7 +1242,7 @@ impl WalletSim {
                 spendable::SpendableInit,
                 witness::spendable_init(
                     (*deriv.data(), ()),
-                    pre_cm_anchor,
+                    anchor_prev,
                     &creation_tgs,
                     epoch,
                     &self.covering_window(note, &deriv),
@@ -1260,7 +1260,7 @@ impl WalletSim {
         pool: &PoolSim,
         height: BlockHeight,
         spend_note: &Note,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
@@ -1271,10 +1271,10 @@ impl WalletSim {
         rng: &mut RNG,
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<pool::Unspent> {
-        let (_, (epoch_start, _), _, (present_epoch, _), _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch);
-        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(present_epoch))
+    ) -> Pcd<pool::NoteUnspent> {
+        let (_, (epoch_start, _), _, (epoch_end, _), _) = *arbitrary.data();
+        let range = self.derivation_pcd(rng, *note, epoch_start, epoch_end);
+        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(epoch_end))
             .map(|epoch| self.nf_at(note, EpochIndex::new(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM
@@ -1296,10 +1296,10 @@ impl WalletSim {
     pub fn lift<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        spendable: Pcd<spendable::SpendableHeader>,
+        spendable: Pcd<spendable::NoteSpendable>,
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
@@ -1317,9 +1317,9 @@ impl WalletSim {
         rng: &mut RNG,
         pool: &PoolSim,
         note: &Note,
-        spendable: Pcd<spendable::SpendableHeader>,
+        spendable: Pcd<spendable::NoteSpendable>,
         target: EpochIndex,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let (_, (epoch, _), start_anchor) = *spendable.data();
         let elapsed: Vec<Nullifier> = (u32::from(epoch)..=u32::from(target))
             .map(|index| self.nf_at(note, EpochIndex::new(index)))
@@ -1337,7 +1337,7 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
+        spends: Vec<(Note, Pcd<spendable::NoteSpendable>, EpochIndex)>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
