@@ -21,9 +21,9 @@ On the left, note commitments. They live in an append-only Merkle tree, and cons
 
 On the right, nullifiers. Every transaction has to show that its input nullifiers have never appeared before. That's an exclusion test against all of history, and a node can't afford to answer it from disk. So the whole set sits in memory, on the critical path of every validator.
 
-Now scale it up. At Visa-level throughput, this set grows by about five hundred gigabytes a day, and nothing in it can ever be thrown away. A nullifier from ten years ago still has to block a double spend today.
+At Visa-level throughput, this set grows by about five hundred gigabytes a day, and nothing in it can ever be thrown away. A nullifier from ten years ago still has to block a double spend today.
 
-That's the wall. Not proof size, not bandwidth. One set that nobody can prune.
+That's the fundamental scaling limitation: a linearly-growing set nobody can prune.
 
 ### 0.2 — The thesis, the black box, and our protagonist
 
@@ -31,7 +31,7 @@ Tachyon's answer starts from one principle: move validation off the critical pat
 
 That proof can't be made once and forgotten. Every new block is more history it has to cover. So it's built incrementally, as proof-carrying data, extended a little each time the chain moves.
 
-All of this runs on Ragu, a proof-carrying data system in the Halo lineage, over the Pasta curves, with no trusted setup. We'll treat it as a black box with two ports. The first one fuses. Give it up to two proofs and a bit of new work, and it hands back a single proof that covers all of it. The second one answers queries. Commit to a polynomial, name a point, and get back its value there. Ragu is designed to expose these evaluation claims to the application directly, and to fold them into the proof system's own running claim, instead of paying for them in circuit constraints. Keep an eye on that second port. Most of this design stands on it.
+All of this runs on Ragu, a proof-carrying data system in the Halo lineage, over the Pasta curves, with no trusted setup. We'll treat it as a black box with two ports. The first one fuses. Give it up to two proofs and a bit of new work, and it hands back a single proof that covers all of it. The second one answers queries. Commit to a polynomial, name a point, and get back its value there. Ragu is designed to expose these evaluation claims to the application directly, and to fold them into the proof system's own running claim, instead of paying for them in circuit constraints. The second part will be critical, as we'll see.
 
 Time in Tachyon is cut into epochs, long stretches of blocks. And here's how we'll go through the design. We'll follow one note. It's born in epoch five, and it's spent in epoch nine. Every piece of Tachyon will show up exactly when this note needs it.
 
@@ -41,11 +41,11 @@ Time in Tachyon is cut into epochs, long stretches of blocks. And here's how we'
 
 ### 1.1 — Why Zcash keys got complicated
 
-Before the note can exist, it needs an owner. And to see what Tachyon changes about ownership, start with a question about Zcash itself.
+Before the note can exist, it needs an owner.
 
-Sprout, following the original Zerocash, needed two keys: a payment key and an encryption key. Orchard's key diagram is not that. So where did all of this come from?
+The first Zcash shielded protocol, Sprout, following the original Zerocash, needed two keys: a payment key and an encryption key. Orchard's key diagram is much more complicated, but why?
 
-The first reason is that proving and authorizing turned into different jobs. Hardware wallets are resource-constrained and vendor-gated, and they can't run a prover. So from Sapling on, authorization became a signature, made outside the proof. But a signature under a fixed key would link every spend by the same owner. So the key gets re-randomized each time. a-k sits in the secret witness, and the instance carries r-k, which is a-k plus alpha times G.
+The first reason is that proving and authorizing turned into different roles. Hardware wallets are resource-constrained, and they can't run a prover. So from Sapling on, authorization became a signature, made outside the proof. But a signature under a fixed key would link every spend by the same owner. So the key gets re-randomized each time. a-k sits in the secret witness, and the instance carries r-k, which is a-k plus alpha times G.
 
 The second reason is that the address does two jobs at once. It declares who owns the note. And it carries the transmission key, which the sender uses to encrypt the note's secrets on chain. Diversified addresses exist for that second job. They refresh the transmission key for each sender, while a single incoming viewing key, i-v-k, can still detect every incoming note.
 
@@ -88,8 +88,6 @@ So the note exists. Where does its commitment go?
 ## Chapter 2 — Birth
 
 ### 2.1 — A set as the roots of a polynomial
-
-To answer that, we need the one idea that carries most of this video. Almost everything after this is this idea plus one more.
 
 Take a set. Say the numbers two, seven and eleven, in the field with thirteen elements. Now build the polynomial whose roots are exactly those members: X minus two, times X minus seven, times X minus eleven. Commit to it, and you have an accumulator.
 
@@ -293,7 +291,7 @@ And the privacy bottom line. A service sees opaque values and ranges it can't te
 
 So what's left for the validator? Per stamp, four checks. The target anchor is in canonical history, and its epoch is either the current one, or the one before. The action accumulator matches the actions, and the tachygram accumulator matches the published list, using the cheap random-point check. And one proof verifies. Balance and signatures work exactly as in Orchard.
 
-Now be precise about what the stamp claims. It proves exclusion strictly before the target epoch. For our spend, that means up to the sentinel that opens epoch nine. The target anchor is not an exclusion endpoint. Duplicates inside epoch nine are consensus's job. That's why every spend targeting epoch nine has to publish its nullifier for nine.
+Let's be precise about what the stamp claims. It proves exclusion strictly before the target epoch. For our spend, that means up to the sentinel that opens epoch nine. The target anchor is not an exclusion endpoint. Duplicates inside epoch nine are consensus's job. That's why every spend targeting epoch nine has to publish its nullifier for nine.
 
 So here's the new double-spend rule. Consensus keeps one duplicate window, holding every tachygram from the current epoch and the one before. Candidates are processed in a fixed order, each one checked, then inserted.
 
