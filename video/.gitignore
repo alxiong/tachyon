@@ -1,0 +1,22 @@
+# Media and generated artifacts stay local; only text (scripts, narration, scene code) is tracked.
+*.mp4
+*.mp3
+*.wav
+*.png
+*.jpg
+*.mov
+.venv/
+__pycache__/
+**/typst_cache/
+**/latex_cache/
+**/renders/
+**/qa/
+**/lint/
+**/videos/
+bin/
+samples/
+# vendored Claude skills (third-party, installed locally)
+.claude/
+.agents/
+**/qa_*/
+*.log

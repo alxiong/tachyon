@@ -1,0 +1,13 @@
+directories:
+  base: ""
+  subdirs:
+    output: "/home/alex/work/tachyon_wt1/video/v2/renders"
+camera:
+  resolution: (1920, 1080)
+  background_color: "#020204"
+  fps: 30
+file_writer:
+  ffmpeg_bin: "/home/alex/work/tachyon_wt1/video/bin/ffmpeg"
+text:
+  font: "New Computer Modern"
+  alignment: "LEFT"
