@@ -37,10 +37,12 @@ RESPELL = [
     (r"\btachygram(s?)\b", r"TACHYGRAM\1"),
     (r"\btachyon\b", "TACHYON"),
     (r"\bpsi\b", "PSI"),
+    (r"\bragu\b", "RAGU"),
 ]
-TACHYON = "Tackion"  # Alex pick 2026-10-04 (sample t2)
+TACHYON = "Tackeon"  # Sean/Alex 2026-10-05 (sample r3_t1); was "Tackion"
 TACHYGRAM = "takkigram"  # sample g3
 PSI = "psy"  # sample 3
+RAGU = "Rah-goo"  # like the sauce (sample r3_t2), 2026-10-05
 
 
 def parse_scenes(path: str) -> list[tuple[str, str]]:
@@ -63,8 +65,8 @@ def parse_scenes(path: str) -> list[tuple[str, str]]:
 def normalize(body: str) -> str:
     for pat, rep in RESPELL:
         body = re.sub(pat, rep, body, flags=re.IGNORECASE)
-    body = body.replace("TACHYGRAM", TACHYGRAM).replace("TACHYON", TACHYON).replace("PSI", PSI)
-    body = body.replace("⟨pause⟩", PAUSE_TAG).replace("*", "").replace("`", "")
+    body = body.replace("TACHYGRAM", TACHYGRAM).replace("TACHYON", TACHYON).replace("PSI", PSI).replace("RAGU", RAGU)
+    body = re.sub(r"⟨pause(?::[^⟩]*)?⟩", PAUSE_TAG, body).replace("*", "").replace("`", "")
     paras = [re.sub(r"\s+", " ", p).strip() for p in body.split("\n\n")]
     return "\n\n".join(p for p in paras if p)
 
