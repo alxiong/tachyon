@@ -315,9 +315,33 @@ And the window? The attacker can push one step further, and hold the second spen
 
 Together, the adjacent pair and the two-epoch window close the gap the grace period opened. And consensus now holds two epochs of tachygrams, not all of history. ⟨pause: the two-epoch grid beside the original from the prologue⟩
 
-### 6.2 — Aggregation
+### 6.2 — Aggregation: from many stamps to one
 
-Finally, aggregation. A miner, or anyone else, takes finished stamps from different transactions, lifts them to a common anchor in the same epoch, never across a sentinel, and merges them with the very same StampMerge: union the multisets, multiply the accumulators, fuse the proofs. ⟨pause: stamps slide to a common anchor and fold into one⟩ The aggregate has the same shape as any stamp, so it can merge again. Each covered transaction drops its own stamp for a reference to the aggregate's witness transaction ID. Balance and signatures stay with each transaction. Only proof verification is shared, and that's an incentive to aggregate.
+So far, every transaction has been a standalone bundle: one with its own stamp, proven by its own wallet. Aggregation turns many standalone bundles into one aggregate bundle, with a single stamp. ⟨pause: standalone bundles stream into the mempool, each with its own stamp⟩
+
+Let's follow the life cycle. Wallets publish their standalone bundles. An aggregator picks some of them and combines them. In the full protocol, anyone can aggregate, and aggregates can be relayed and merged again. But a miner has the strongest reason to do it, because every byte of proof saved is room for more fees. So here, we'll let the miner be the only aggregator.
+
+First, the lift. The stamps target different anchors, so the miner lifts each one to a single common anchor, inside one epoch, never across a sentinel. It's the same StampLift as before. ⟨pause: stamps slide to a common anchor⟩ And no lift depends on another, so they can all run at once.
+
+Then the merge. StampMerge takes two stamps and returns one: it unions the tachygrams, multiplies the accumulators, and fuses the proofs. We pair the stamps up, pair the results, and keep going up a binary tree, until one stamp is left. ⟨pause: the merge tree folds up to a single stamp⟩ Consensus refuses duplicate tachygrams, so a merge of two overlapping sets could never land on chain. There's nothing extra to enforce.
+
+Next, assembly. The block carries the aggregate, and every transaction it covers. But each covered transaction drops its own stamp, and points at the aggregate's witness transaction ID instead. ⟨pause: each transaction swaps its stamp for a reference⟩ That's why the stamp lives in the authorization data. Swapping it changes the witness ID, never the transaction ID, and every signature stays valid.
+
+Finally, validation. A validator checks that the tachygrams are distinct, that the aggregate's coverage matches the transactions pointing at it, and that one proof verifies. One proof, however many transactions it covers.
+
+### 6.3 — What aggregation buys
+
+Let's put numbers on it, with the simplification we just made: wallets send standalone bundles, and the miner aggregates alone.
+
+Latency first. All the lifts run in parallel, so they cost one proving step. The merges form a binary tree, so a block of N transactions adds log N more. ⟨pause: a depth counter beside the merge tree⟩ With enough cores, doubling the traffic costs just one more step. Today, a step takes about one point two seconds on a laptop.
+
+Now the budget. A block comes every twenty-five seconds. Subtract two to send it out, and two more to verify it and run the rest of the node. That leaves about twenty seconds, which is sixteen steps: one lift, and fifteen levels of merging. ⟨pause: the merge tree grows to fifteen levels⟩ Fifteen levels cover more than thirty-two thousand transactions, over thirteen hundred per second, from a single miner.
+
+Next, size. A compressed proof is about seven point four kilobytes. A two-in, two-out transaction is only about seven hundred and seventy bytes: eight tachygrams, four actions of r-k and c-v, and a small encrypted memo. ⟨pause: a block bar, proof share against payload⟩ Without aggregation, every transaction hauls a proof ten times its own size, and a two-megabyte block holds about two hundred and forty. With aggregation, the block carries a single proof, and fits about twenty-six hundred. Each transaction's share of the proof falls from seven kilobytes to under three bytes.
+
+So size, not proving, is the ceiling. Let's raise the block limit to twenty megabytes. That fits about twenty-six thousand transactions, which is roughly a thousand per second. ⟨pause: block bar grows, a thousand per second⟩ And proving them still fits the window: sixteen steps, about nineteen seconds.
+
+So a validator checks one proof per block, and the proof's share of each transaction shrinks as traffic grows. Proof size stops being the bottleneck, and what's left is delivering the notes themselves.
 
 ---
 

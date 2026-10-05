@@ -62,7 +62,7 @@ narration always says when we return to the real Pasta field.
 
 - **Structure.** v1 taught the mechanisms in spec order, as topics. v2 orders them by
   the note's life. The content decisions locked in v1 still hold (binding signature
-  demoted, no GGM, aggregation in one breath, PIR as a black box, a one-line
+  demoted, no GGM, aggregation in one breath (superseded in round 4), PIR as a black box, a one-line
   `#nf-sec`).
 - **Synced to the current spec.** These were added or fixed: the singleton
   inclusion-epoch path (`NoteUnspentInit` → `SpendableReinit`); the
@@ -432,7 +432,7 @@ This is the longest scene, so pace it in three movements (branch A, branches B+C
 
 ---
 
-## Chapter 6 — Landing: consensus and aggregation (~3.5 min)
+## Chapter 6 — Landing: consensus and aggregation (~6 min)
 
 ### Scene 6.1 — The validator and the two-epoch window
 **Duration**: ~130 s
@@ -450,15 +450,58 @@ This is the longest scene, so pace it in three movements (branch A, branches B+C
 - The rule: one duplicate window over the current and preceding epochs, with deterministic check-then-insert ordering. A conflict can come from the window, an earlier bundle in the same block, or an earlier tachygram in the same bundle.
 - Walk the two acceptance cases for our epoch-9 stamp (it carries both notes' pairs; take note₅'s). Accepted in 9: a rival targeting 9 shares `nf_9`; a rival targeting 8 published `nf_9` as its next value; anything older lies in proven history. Accepted in 10: rivals targeting 9 or 10 share `nf_9` or `nf_10`; a rival targeting 8 accepted during 9 is still in the window, and earlier rivals are caught by past exclusion. The overlapping adjacent pair is what makes the grace period safe.
 
-### Scene 6.2 — Aggregation, in one breath
-**Duration**: ~50 s
-**Purpose**: The network-level fold.
+### Scene 6.2 — Aggregation: from many stamps to one
+**Duration**: ~110 s
+**Purpose**: Walk the aggregation life cycle from the ZIP (`draft-tachyon-aggregation-protocol`) using only steps the audience already knows (`StampLift`, `StampMerge`), and repay the 2.2 debt: *why* the stamp lives in auth data.
 
 #### Visual Elements
-- Mempool stamps slide to one common anchor tick, never across a sentinel, then fold into a single aggregate. Per-transaction signature seals stay attached to each constituent, and their stamps become `wtxid` references.
+- **Standalone bundles arrive.** Transaction cards stream into a mempool lane, each carrying its own stamp slab (the 2.2 stamp card, small) at a *different* anchor tick on the epoch rail. The slabs are visibly heavy compared to the card body.
+- **The lift.** A miner glyph (neutral `#c8c4bf` outline, no new role color) reaches in. Every stamp slides along a star-white `AnchorChain` segment to one common tick, all at the same time, and bounces off the sentinel gate if pushed across it (callback to 5.2).
+- **The merge tree.** Stamps pair up. Each pair fuses with `StampMerge` into one slab (accumulators multiply, tachygram pouches union), then the results pair, up a binary tree to one star-white aggregate slab. A one-frame inset: two overlapping pouches try to merge and the duplicate tachygram flashes flare orange and the slab refuses to form. No tooling, just the refusal.
+- **Assembly.** The 2.2 txid / wtxid diagram returns. Each covered transaction's stamp slab detaches and is replaced by a thin pointer to the aggregate's `wtxid`. The `txid` field stays lit, the `wtxid` field flickers. The signature seals do not move.
+- **Validation.** A three-lamp checklist (tachygrams distinct, coverage matches, one proof verifies) lights in turn. The last lamp sits beside a single slab, however many transactions point at it.
 
 #### Content
-- Lift each stamp to a common anchor in the same epoch. `StampMerge` unions the multisets, multiplies the accumulators, and folds the proofs. The aggregate has the same shape as a standalone stamp and can merge again. Balance and authorization stay per constituent. Verification amortizes, so the economics favor aggregating.
+- So far, every transaction was a *standalone bundle*: one with its own stamp, proven by its own wallet. Aggregation turns many standalone bundles into one *aggregate bundle* with a single stamp.
+- The life cycle, in five beats: (1) wallets publish standalone bundles; (2) an aggregator picks stamps; (3) it lifts them to a common anchor in one epoch, never across a sentinel; (4) it merges them pairwise into one stamp; (5) the block carries the aggregate, each covered transaction trades its stamp for a `wtxid` reference, and validators verify one proof.
+- In the full protocol anyone can aggregate, aggregates can be relayed and merged again, and the ZIP covers coverage digests and relay policy. We do not go there. For the video the miner is the only aggregator, because the miner has the strongest incentive (proof bytes saved are fee space gained). The ZIP explicitly allows a miner to aggregate privately during block assembly.
+- Overlap needs no rule: consensus refuses duplicate tachygrams, so an aggregate of overlapping sets could never land. That is the multiset / square-free fact from 2.1 reused, in one sentence.
+- The txid payoff: the stamp lives in authorization data, so swapping it changes the `wtxid`, never the `txid`, and every signature stays valid.
+
+#### Narration Notes
+- Calm, procedural. This is a pipeline, so let the diagram carry it and hold a beat on each stage (the narration has a `⟨pause⟩` at the arrival, lift, merge, and swap).
+- Do not name `hStampActionsTachyon`, adjuncts, or `tachyonAggregateId` on screen. Those belong in the ZIP.
+
+#### Technical Notes
+- Reuse the 5.2 `StampLift` and `StampMerge` animations at small scale. Build the merge tree from `VGroup` rows of slabs with `ReplacementTransform` pairs per level, and keep the level index as a `ValueTracker` so 6.3's depth counter attaches to the same mobject.
+- Rebuild the 2.2 txid / wtxid diagram from the shared style module rather than re-deriving it.
+- Keep the stamp slabs the same size as in 2.2, and scale the whole group down together, so the audience recognizes them.
+
+### Scene 6.3 — What aggregation buys
+**Duration**: ~120 s
+**Purpose**: Pay off the prologue's scaling wall with first-order numbers for latency and size. The conclusion matters more than the arithmetic, so the screen carries three cards, not a spreadsheet.
+
+#### Visual Elements
+- **Latency card.** The merge tree from 6.2 reappears with a depth counter beside it: "lift (1) + merges (log₂ N)". Doubling N adds one level. Beside it, a 25 s block timeline: 2 s send | 2 s verify + node | ~20 s aggregate (highlighted).
+- **Size card.** Two 2 MB block bars, drawn to scale. *Without aggregation*: ~245 transaction slabs, each with a proof slab roughly ten times its own body. *With aggregation*: one proof slab at the front and ~2,600 thin slabs behind it. A counter beside the second bar: "proof per tx: 7.4 KB → 2.9 B".
+- **Scale-up card.** The aggregated bar stretches to 20 MB (~26K transactions, ~1K/s). The step counter reads 16, and a stopwatch runs 16 × 1.2 s = 19.2 s, finishing just inside the 20 s window.
+- **Callback.** The hot grid from 0.1 does not return here (6.1 already used it). Close on the per-block proof slab alone on screen.
+
+#### Content
+- **Simplification, stated once.** Wallets send standalone bundles, and the miner aggregates alone. We blackbox the collaborative path through the mempool. This is reasonable because the miner profits most from fitting transactions into a block.
+- **Latency.** All lifts are independent, so with enough cores they cost one proving step. The merges form a binary tree, so N stamps add ⌈log₂ N⌉ steps. Doubling throughput costs one more step. A step is ~1.2 s on a laptop today (measured locally, multicore on; the unoptimized figure in Ragu PR #873 was ~2 s). A 25 s block, minus 2 s to send it out and 2 s to verify it and run the node, leaves ~20 s: 20 / 1.2 ≈ 16 steps, which is 1 lift + 15 merge levels, so up to 2¹⁵ = 32,768 stamps per block (~1.3K per second) from the miner alone.
+- **Size.** A compressed proof is ~7.4 KB (Ragu PR #462 after the revdot optimization). A 2-in, 2-out transaction is ~770 B: 8 tachygrams × 32 B = 256 B; 4 actions × (cv, rk) × 32 B = 256 B; ~256 B of symmetric AEAD ciphertext. Alone, every transaction carries a proof ~10× its own size (~245 per 2 MB block). Aggregated, the block carries one proof: (2,000,000 − 7,400) / 768 ≈ 2,594 per block, ~10× more, and each transaction's share of the proof falls to ~2.9 B.
+- **Scale-up.** Size is the ceiling, not proving, so raise the limit to 20 MB: ~26K transactions, ~1,040 per second at 25 s blocks. Covering 26K takes 1 lift + 15 merges = 16 steps (2¹⁵ = 32,768 ≥ 26K), 16 × 1.2 s = 19.2 s ≤ 20 s. The 2 MB block (~2,594 tx) needs only 1 + 12 = 13 steps, 15.6 s.
+- **Bottom line.** One proof per block. Its share of each transaction shrinks as traffic grows, so proof size stops being the bottleneck. What remains is delivering the notes (Ch. 7).
+
+#### Narration Notes
+- Do not read the derivations. State each result once, with the animation showing the inputs. Never say "first-order" or hedge more than the single "unoptimized" caveat.
+- The ML-KEM first-contact ciphertext (~2 KB) is deliberately omitted from the 770 B (it would dominate block space). If a viewer asks, it is a payment-protocol cost, and it is the reason a larger block limit is on the table at all. This stays out of the narration.
+
+#### Technical Notes
+- The size bars are `Rectangle`s sized by a single scale constant, with the slab counts drawn from the numbers above (245 and 2,594). Draw only a sample of slabs and let the rest be a texture fill, and keep the counters as `DecimalNumber` with `ChangeDecimalToValue`.
+- Keep the numbers in one `numbers.py` in the shared style module so the narration, the cards and the checks can't drift apart. The derivations above are the source of truth, and an assert in that module should recompute them.
+- Not modelled, and absent from the budget: the time to *compress* the final aggregate. Flag it in a code comment, not on screen.
 
 ---
 
@@ -513,8 +556,8 @@ This is the longest scene, so pace it in three movements (branch A, branches B+C
 ## Transitions & Flow
 
 - **Persistent spine.** The note card is docked top-left from 0.2 onward and pulses when its fields matter (ψ in 3.2, `cm` in 2.2 and 5.3). The epoch rail sits along the bottom from 0.2 onward; "now" advances 5 → 9 over Ch. 3–5. The field line appears in 2.1 and returns in 3.3, 4.3, and 4.5.
-- **Visual debts, repaid**: the empty pouch slot (2.2 → 3.2), the word "sentinel" (3.3 → 4.4/5.3), the shared spend steps (5.2 → 5.3), square-freeness (2.1 → 4.3), Faerie gold and `ivk` unlinkability (1.2 → 7.1), the hot grid (0.1 → 6.1).
-- **Chapter boundaries end on a question**, spoken: "Where does `cm` go?" / "Now the clock moves." / "Can exclusion be cheap?" / "What does the proof actually look like?" / "What does the validator still do?" / "Who carries the rest?"
+- **Visual debts, repaid**: the empty pouch slot (2.2 → 3.2), the word "sentinel" (3.3 → 4.4/5.3), the shared spend steps (5.2 → 5.3), square-freeness (2.1 → 4.3), Faerie gold and `ivk` unlinkability (1.2 → 7.1), the hot grid (0.1 → 6.1), the txid / wtxid split (2.2 → 6.2), the unprunable-set wall (0.1) answered with per-block numbers (6.3).
+- **Chapter boundaries end on a question**, spoken: "Where does `cm` go?" / "Now the clock moves." / "Can exclusion be cheap?" / "What does the proof actually look like?" / "What does the validator still do?" / "What does one proof per block buy?" / "Who carries the rest?"
 - **Within scenes**: transform, don't replace. Old context shrinks to a corner and stays legible, ready for callbacks.
 
 ## Color Palette (brand theme, 3b1b discipline)
@@ -606,3 +649,9 @@ None. Flow approved by Alex (2026-10-04). Verbatim narration: `NARRATION.md` (dr
 - Ch5: note₅'s dot is hidden while note₉ is discussed. The StampLift "anchor" marker never passes "now". The docked notes are removed.
 - Ch6: a stamp is drawn as actions carrying 2 tachygrams each. 6.1 is re-narrated around the grace-period double-spend attack (the pair plus the two-epoch window come as a set); the two-case walk-through was dropped. 6.2 aggregation is redrawn.
 - Ch8: replaced by v1's 8.1/8.2 text and act8 animation (audit table, cascade), with audio regenerated in v2's voice.
+
+### Round 4 (2026-10-05, aggregation expanded)
+
+- Ch6: aggregation grows from one breath (old 6.2) into two scenes. 6.2 walks the life cycle from the ZIP with the miner as sole aggregator. 6.3 is the cost story (latency and size), chosen over the p2p-relay route because it answers the prologue's scaling wall; relay details (coverage digests, adjuncts, overlap handling) stay in the ZIP.
+- Numbers: the PCD step takes 1.2 s (Alex's local multicore benchmark; the earlier 2 s figure from Ragu PR #873 would allow only 10 steps, 1 lift + 9 merges = 512 stamps). At 1.2 s, the 20 s window allows 16 steps (1 lift + 15 merge levels): 2¹⁵ = 32,768 stamps, ~1.3K per second. Size is the binding ceiling. Size figures: 7.4 KB proof, ~770 B per transaction, ~245 → ~2,594 transactions per 2 MB block, ~26K at 20 MB (~1K/s).
+- Open: the compression time for the final aggregate is not in the budget.

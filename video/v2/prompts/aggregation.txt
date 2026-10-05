@@ -1,0 +1,60 @@
+Currently, in our v2/NARRATION.md, we have briefly mentioned that aggregation reuses
+mechanism/steps like `StampLift` and `StampMerge` already introduced, by first lifting
+the anchors of contributing bundle to the same anchor within the same spending epoch,
+then use `StampMerge` to merge them.
+
+This description is too short and we sort of downplay its importance. We want to dedicate
+non-trivial portion of the chapter on how the aggregation work with concrete back-of-envelop
+estimation of the proving/aggregation latency and final amortized cost.
+
+We should at least walk through the aggregation life cycle specified in
+https://github.com/tachyon-zcash/zips/blob/b373a6b0ed627904dffbf9289745aa231ddee1eb/zips/draft-tachyon-aggregation-protocol.md
+
+After a broad stroke intro of aggregation lifecycle, we have two options to zoom in on.
+One is discuss like the ZIP writeup, on the details of transaction identification and what
+happens at the p2p relay level: how to identify an aggregate and its contributing tachygrams,
+how to verify an aggregate and relay them forward, how to avoid/substract conjunction of
+two overlapping sets etc.
+The other is discuss the concrete cost (size and delay) to picture the scaling it brings.
+I personally lean towards the latter but you can evaluate and tell me which route fits better
+with the rest of the narrative.
+
+For the second option, here's a rough breakdown. We make simplifying assumption that every
+wallet just send a standalone bundle (i.e. autonome), and the only aggregator is the
+miner/validator who assemble it into a block that he proposes. We completely blackbox or
+drop the complex interaction of collaborative aggregation through mempool. This simplification
+is highly reasonable because in practice miners, who benefit from squeezing in as many
+transactions into a block as possible to reap more fees within the block limit has the
+strongest incentive to aggregate.
+First, let's look at latency.
+The miner/aggregator first need to lift all contributing stamps to the same anchor,
+this is a single steps for each member stamp, but this is parallelizable, the overall latency,
+assuming infinite cores, is just one PCD step: `StampLift`. Then we have to pair-wise
+`StampMerge`, which forms a 2-arity tree, with log depth, thus log number of PCD steps.
+Given a PCD step time of 1.2 sec, measured locally on a consumer laptop with the multicore
+features on (the earlier unoptimized figure in https://github.com/tachyon-zcash/ragu/pull/873
+was ~2 sec), and a 25 sec block time after NU7, reserving 2 sec for final transaction
+transmission, and another 2 sec for verification and conservatively other Zakura node logic,
+we are left with roughly 20 sec for aggregation. That is 20 / 1.2 ~= 16 sequential steps:
+1 for the lift, so 15 levels of the merge tree. With unlimited cores we can aggregate
+2^15 = 32,768 transactions (one stamp each) per block, which supports 32,768 / 25 sec
+~= 1.3K TPS even if miner has no help and is the only aggregator for the block.
+Second, let's look at size.
+Given the compressed size of 7.4KB reported in https://github.com/tachyon-zcash/ragu/pull/462,
+assuming each tx is 2-in-2-out, thus 8 tachygrams,
+and 8 * 32 = 256 bytes in tg, 4 * 2 * 32 = 256 for (cv, rk) spend/output actions,
+assuming there's no ML-KEM first-contact ciphertext which is ~2KB each (will dominate block space thus clearly need an upgrade to `MAX_BLOCK_BYTES: u64 = 2_000_000;`); we only assume
+symmetric AEAD ciphertext of another 256 bytes per tx. 
+This gives us (very roughly, since we ignore some other smaller-sized fields):
+(2MB - 7.4KB) / (3*256) = 2.6K transaction per block.
+clearly size is lower ceiling at this moment. but assuming we can safely assume that this
+size limit would increase with our TPS, and a 20MB block is still reasonable which gives
+us 26K tachyon tx per block, and that's roughly 1K TPS given the 25 second block time.
+This still fits the latency budget: 26K needs 1 lift + 15 merge levels = 16 steps
+= 16 * 1.2 = 19.2 sec <= 20 sec (and the 2MB block, 2.6K tx, needs only 1 + 12 = 13 steps
+= 15.6 sec). So proving latency allows ~1.3K TPS and size allows ~1K TPS at 20MB: size is
+the binding ceiling.
+
+Now the estimation above is first-order and too long, our presentation should never be
+as pedantic and dull. We should highlight the conclusion with convincingly enough details,
+you will be the judge.
