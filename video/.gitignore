@@ -20,3 +20,8 @@ samples/
 .agents/
 **/qa_*/
 *.log
+# Generated voice data: ElevenLabs alignment timings and the clone-set manifest
+# (which quotes the source recordings). Rebuilt by the v2 scripts.
+**/audio/clone/
+**/audio/sean/
+*.align.json

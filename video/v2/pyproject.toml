@@ -9,6 +9,7 @@ dependencies = [
     "setuptools",
     "av",
     "faster-whisper>=1.2.1",
+    "praat-parselmouth>=0.4.7",
 ]
 
 [tool.uv]
