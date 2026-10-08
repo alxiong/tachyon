@@ -58,13 +58,13 @@ It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the linea
 Nonzero guards close the `nf == 0` degenerate.
 The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
 
-`SpendStamp` consumes that `SpendHeader`, witnessing the action-randomness and the proof authorizing key.
+`SpendStamp` consumes that `SpendHeader`, witnessing the action entropy `theta` and the proof authorizing key.
 It requires the key to derive the header's `pk`, so the randomized action key `rk` belongs to the lineage's note, whose minted value `cv` commits to[^notes].
-It derives the action digest from `cv` and `rk`, and emits a `Stamp` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+It derives the action randomizer `alpha` from `theta` and `cm`, then the action digest from `cv` and `rk`, and emits a `Stamp` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
 
 An output operation also takes two steps, `OutputBind` and `OutputStamp`.
 `OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and the value commitment `cv`.
-`OutputStamp` adds action-randomness and an anchor, and emits a single-action `Stamp` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
+`OutputStamp` derives `alpha` from the witnessed `theta` and `cm`, adds an anchor, and emits a single-action `Stamp` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
 
 A transaction with multiple spend and output stamps composes them with `StampMerge`.
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
@@ -259,7 +259,7 @@ The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with th
 `NoteSeed` computed the secret's `cm` from its note, so `secret.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
 The note rides only on the wallet-private `NoteSecret`, so it never reaches a published header.
 
-`SpendStamp` completes the publication: it requires the witnessed proof authorizing key to derive the header's `pk`, derives the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
+`SpendStamp` completes the publication: it requires the witnessed proof authorizing key to derive the header's `pk`, derives `alpha` from the witnessed `theta` and the header's `cm`, derives the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
 
 The two complementary `cm` checks pin value two independent ways. `NoteSeed`'s `cm = note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
@@ -270,8 +270,8 @@ The note's age never becomes public. The lineage carries only a single current n
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
 Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
-`OutputStamp` reads `cv` off the `OutputHeader`, then derives an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
-`SpendStamp` reads `cv` off the `SpendHeader`, derives the action verification key and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
+`OutputStamp` reads `cv` off the `OutputHeader`, derives the action randomizer `alpha` from the witnessed `theta` and the header's `cm`, then an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
+`SpendStamp` reads `cv` off the `SpendHeader`, derives `alpha` from `theta` and the header's `cm`, then the action verification key and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
 
 Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step, and a scalar multiplication about a quarter.
 The work splits as follows, each stamp step also opening its action-set and tachygram-set polynomials:
@@ -279,9 +279,9 @@ The work splits as follows, each stamp step also opening its action-set and tach
 | Step | Permutations | Scalar multiplications |
 | ---- | ------------ | ---------------------- |
 | OutputBind | 4 (`cm`, `pad`) | 2 (`cv`) |
-| OutputStamp | 2 (action digest) | 1 (`rk`) |
+| OutputStamp | 3 (`alpha`, action digest) | 1 (`rk`) |
 | SpendBind | 2 (nullifier pair) | 2 (`cv`) |
-| SpendStamp | 3 (`pk`, action digest) | 1 (`rk`) |
+| SpendStamp | 4 (`pk`, `alpha`, action digest) | 1 (`rk`) |
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
@@ -332,11 +332,11 @@ flowchart TB
   end
 
   subgraph merge [transaction assembly]
-    w_stamp[/alpha, pak/]
+    w_stamp[/theta, pak/]
     s_spendstamp[SpendStamp]
     w_outbind[/note/]
     s_outbind[OutputBind]
-    w_output[/rcv, alpha, anchor/]
+    w_output[/rcv, theta, anchor/]
     s_output[OutputStamp]
     s_merge[StampMerge]
   end
@@ -472,8 +472,8 @@ flowchart LR
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
 | SpendBind | NoteSpendable | NoteSecret | rcv | SpendHeader |
 | OutputBind | — | — | note, rcv | OutputHeader |
-| OutputStamp | OutputHeader | — | alpha, anchor, action_set, tachygram_set | Stamp |
-| SpendStamp | SpendHeader | — | alpha, pak, action_set, tachygram_set | Stamp |
+| OutputStamp | OutputHeader | — | theta, anchor, action_set, tachygram_set | Stamp |
+| SpendStamp | SpendHeader | — | theta, pak, action_set, tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorChain | — | Stamp |
 

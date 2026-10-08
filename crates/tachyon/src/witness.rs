@@ -11,9 +11,9 @@ use ragu::{Header, Step};
 
 use crate::{
     collections,
-    entropy::ActionRandomizer,
+    entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
-    note::Note,
+    note::{self, Note},
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
@@ -398,11 +398,11 @@ pub fn unspent_lift(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(alpha, anchor, action_set,
+/// Prepare the witness for [`OutputStamp`]: `(theta, anchor, action_set,
 /// tachygram_set)`.
 ///
-/// Reads the tachygram pair and `cv` off the bind header and derives the
-/// action from `cv` and `alpha`.
+/// Reads the tachygram pair and `cv` off the bind header, derives `alpha`
+/// from `theta` and `cm`, and derives the action from `cv` and `alpha`.
 ///
 /// # Panics
 ///
@@ -411,10 +411,11 @@ pub fn unspent_lift(
 #[must_use]
 pub fn output_stamp(
     (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
-    alpha: ActionRandomizer<effect::Output>,
+    theta: ActionEntropy,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
     let (cm, pad, cv) = left;
+    let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
     #[expect(
         clippy::expect_used,
@@ -427,18 +428,19 @@ pub fn output_stamp(
     .expect("action digest");
 
     (
-        alpha,
+        theta,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([cm, pad]),
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(alpha, pak, action_set,
+/// Prepare the witness for [`SpendStamp`]: `(theta, pak, action_set,
 /// tachygram_set)`.
 ///
-/// Reads the nullifier pair and `cv` off the bind header, and derives the
-/// action from `cv` and `pak` randomized by `alpha`.
+/// Reads `cm`, the nullifier pair and `cv` off the bind header, derives
+/// `alpha` from `theta` and `cm`, and derives the action from `cv` and `pak`
+/// randomized by `alpha`.
 ///
 /// # Panics
 ///
@@ -446,10 +448,11 @@ pub fn output_stamp(
 #[must_use]
 pub fn spend_stamp(
     (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
-    alpha: ActionRandomizer<effect::Spend>,
+    theta: ActionEntropy,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, SpendStamp> {
-    let (_cm, nf_current, nf_next, _anchor, _pk, cv) = left;
+    let (cm, nf_current, nf_next, _anchor, _pk, cv) = left;
+    let alpha = theta.randomizer::<effect::Spend>(cm);
 
     #[expect(
         clippy::expect_used,
@@ -458,7 +461,7 @@ pub fn spend_stamp(
     let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
     (
-        alpha,
+        theta,
         pak,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),

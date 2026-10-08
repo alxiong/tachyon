@@ -464,6 +464,9 @@ impl Plan {
     /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
     /// sign the bundle with the [`private::BindingSigningKey`].
     ///
+    /// Derives each `alpha` from the action's `theta` and the commitment of
+    /// its note.
+    ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
     ///

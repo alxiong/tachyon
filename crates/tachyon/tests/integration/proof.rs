@@ -13,10 +13,10 @@ use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram, TachygramSetPoly,
+    ActionSetCommit, ActionSetPoly, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
+    TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
-    effect,
     entropy::ActionEntropy,
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
@@ -121,15 +121,14 @@ fn honest_spend_bind(
 fn honest_spend_stamp(
     rng: &mut StdRng,
     user: &WalletSim,
-    note: &Note,
     bind_pcd: Pcd<spend::SpendHeader>,
 ) -> Pcd<stamp::Stamp> {
-    let (_rcv, _theta, alpha) = spend_witness(rng, note);
+    let (_rcv, theta) = spend_witness(rng);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), alpha, user.pak),
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -148,7 +147,7 @@ fn same_epoch_honest_spend_accepted() {
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
-    let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp = honest_spend_stamp(rng, &user, bind_pcd);
 
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch).into(),
@@ -428,12 +427,12 @@ fn spend_rejects_invalid_note() {
     }
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_rcv, _theta, alpha) = spend_witness(rng, &note);
+    let (_rcv, theta) = spend_witness(rng);
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), alpha, other.pak),
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -461,7 +460,6 @@ fn step_accepts_zero_value_note() {
         };
         let out_rcv = value::Trapdoor::random(rng);
         let out_theta = ActionEntropy::random(rng);
-        let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
         let out_anchor = PoolSim::genesis(rng).anchor();
 
         let (bind_pcd, ()) = PROOF_SYSTEM
@@ -472,7 +470,7 @@ fn step_accepts_zero_value_note() {
             .fuse(
                 rng,
                 stamp::OutputStamp,
-                witness::output_stamp((*bind_pcd.data(), ()), out_alpha, out_anchor),
+                witness::output_stamp((*bind_pcd.data(), ()), out_theta, out_anchor),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -487,12 +485,12 @@ fn step_accepts_zero_value_note() {
         let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
         let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-        let (_rcv, _theta, alpha) = spend_witness(rng, &note);
+        let (_rcv, theta) = spend_witness(rng);
         PROOF_SYSTEM
             .fuse(
                 rng,
                 stamp::SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), ()), alpha, user.pak),
+                witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -534,7 +532,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
         "nf_1 was consumed by the lift"
     );
 
-    let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp = honest_spend_stamp(rng, &user, bind_pcd);
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch2).into(),
         user.nf_at(&note, EpochIndex::new(3)).into(),
@@ -555,7 +553,7 @@ fn spend_stamp_assembles_tachygrams() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let stamp_pcd = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp_pcd = honest_spend_stamp(rng, &user, bind_pcd);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
         Tachygram::from(user.nf_at(&note, spend_epoch)),
@@ -1432,15 +1430,15 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-    let (_rcv, _theta, alpha) = spend_witness(rng, &note);
-    let (.., action_set, _pair) = witness::spend_stamp((*bind_pcd.data(), ()), alpha, user.pak);
+    let (_rcv, theta) = spend_witness(rng);
+    let (.., action_set, _pair) = witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak);
     // A foreign tachygram in place of the confirmed pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
         stamp::SpendStamp,
-        (alpha, user.pak, action_set, forged),
+        (theta, user.pak, action_set, forged),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "SpendStamp: tachygram set does not commit to the nullifier pair",
@@ -1459,17 +1457,18 @@ fn spend_stamp_rejects_a_foreign_action_set() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-    let (_rcv, _theta, alpha) = spend_witness(rng, &note);
-    // A different randomizer yields a different rk, so a different digest.
-    // The tachygram set comes off the bind header, so it is honest either way.
-    let (_, _, foreign_alpha) = spend_witness(rng, &note);
+    let (_rcv, theta) = spend_witness(rng);
+    // A different entropy yields a different alpha and rk, so a different
+    // digest. The tachygram set comes off the bind header, so it is honest
+    // either way.
+    let (_, foreign_theta) = spend_witness(rng);
     let (.., foreign, tachygram_set) =
-        witness::spend_stamp((*bind_pcd.data(), ()), foreign_alpha, user.pak);
+        witness::spend_stamp((*bind_pcd.data(), ()), foreign_theta, user.pak);
 
     expect_invalid(
         rng,
         stamp::SpendStamp,
-        (alpha, user.pak, foreign, tachygram_set),
+        (theta, user.pak, foreign, tachygram_set),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "SpendStamp: action set does not commit to the action",
@@ -1589,7 +1588,7 @@ fn output_bind_publishes_the_note_pair() {
 fn output_stamp_publishes_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
-    let (rcv, alpha, _plan) = build_output_plan(rng, note);
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let anchor = PoolSim::genesis(rng).anchor();
 
     let (bind_pcd, ()) = PROOF_SYSTEM
@@ -1599,7 +1598,7 @@ fn output_stamp_publishes_the_note_pair() {
         .fuse(
             rng,
             stamp::OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), alpha, anchor),
+            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -1622,20 +1621,20 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
-    let (rcv, alpha, _plan) = build_output_plan(rng, note);
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
 
     let anchor = PoolSim::genesis(rng).anchor();
-    let (.., action_set, _pair) = witness::output_stamp((*bind_pcd.data(), ()), alpha, anchor);
+    let (.., action_set, _pair) = witness::output_stamp((*bind_pcd.data(), ()), theta, anchor);
     // A foreign tachygram in place of the bound pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
         stamp::OutputStamp,
-        (alpha, anchor, action_set, forged),
+        (theta, anchor, action_set, forged),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "OutputStamp: tachygram set does not commit to the bound pair",
@@ -1659,27 +1658,128 @@ fn output_stamp_rejects_a_foreign_action_set() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
-    let (rcv, alpha, _plan) = build_output_plan(rng, note);
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
 
     let anchor = PoolSim::genesis(rng).anchor();
-    // A different randomizer yields a different rk, so a different digest.
-    // The tachygram set comes off the bind header, so it is honest either way.
-    let (.., foreign, tachygram_set) = witness::output_stamp(
-        (*bind_pcd.data(), ()),
-        ActionEntropy::random(rng).randomizer::<effect::Output>(note.commitment()),
-        anchor,
-    );
+    // A different `theta` yields a different rk, so a different digest. The
+    // tachygram set comes off the bind header, so it is honest either way.
+    let (.., foreign, tachygram_set) =
+        witness::output_stamp((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
     expect_invalid(
         rng,
         stamp::OutputStamp,
-        (alpha, anchor, foreign, tachygram_set),
+        (theta, anchor, foreign, tachygram_set),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "OutputStamp: action set does not commit to the action",
+    );
+}
+
+/// The action commitment of an output proved over `note` with the planned
+/// `theta` and `rcv`.
+fn output_action_commit(
+    rng: &mut StdRng,
+    note: Note,
+    theta: ActionEntropy,
+    rcv: value::Trapdoor,
+) -> ActionSetCommit {
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (note, rcv))
+        .expect("OutputBind honest");
+    let anchor = PoolSim::genesis(rng).anchor();
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            stamp::OutputStamp,
+            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("OutputStamp honest");
+    pcd.data().0
+}
+
+/// A planned output proves only over its own note. `OutputStamp` derives
+/// `alpha` from the bound `cm`, so a same-value note to another recipient under
+/// the plan's `theta` and `rcv` yields another `rk`, and the signed action is
+/// not the proved one.
+#[test]
+fn output_action_is_bound_to_its_note() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let note = WalletSim::new(shared_sk()).random_note(200);
+    let diverted = WalletSim::random(rng).random_note(200);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::output(note, theta, rcv);
+    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+
+    assert_eq!(output_action_commit(rng, note, theta, rcv), planned);
+    assert_ne!(output_action_commit(rng, diverted, theta, rcv), planned);
+}
+
+/// The action commitment of a spend of `note` proved with the planned `theta`
+/// and `rcv`.
+fn spend_action_commit(
+    rng: &mut StdRng,
+    user: &WalletSim,
+    spendable: Pcd<spendable::NoteSpendable>,
+    note: Note,
+    theta: ActionEntropy,
+    rcv: value::Trapdoor,
+) -> ActionSetCommit {
+    let secret_pcd = honest_secret(rng, user, note);
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
+        .expect("SpendBind honest");
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            stamp::SpendStamp,
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("SpendStamp honest");
+    pcd.data().0
+}
+
+/// A planned spend proves only over its own note. `SpendStamp` derives `alpha`
+/// from the bound `cm`, so a same-value note of the same wallet under the
+/// plan's `theta` and `rcv` yields another `rk`.
+#[test]
+fn spend_action_is_bound_to_its_note() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let swapped = user.random_note(500);
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(
+        rng,
+        &[vec![note.commitment(), swapped.commitment()]],
+        4,
+    ));
+    let height = pool.height();
+
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        user.pak.ak.derive_action_public(&alpha)
+    });
+    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+
+    let planned_spendable = user.fresh_spend(rng, &pool, height, &note);
+    assert_eq!(
+        spend_action_commit(rng, &user, planned_spendable, note, theta, rcv),
+        planned
+    );
+    let swapped_spendable = user.fresh_spend(rng, &pool, height, &swapped);
+    assert_ne!(
+        spend_action_commit(rng, &user, swapped_spendable, swapped, theta, rcv),
+        planned
     );
 }
 
