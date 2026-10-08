@@ -82,8 +82,12 @@ def build(n: str) -> None:
             vf.append(f"fade=t=out:st={d - FADE}:d={FADE}")
         out = f"{tmp}/{sid}.mp4"
         vargs = ["-vf", ",".join(vf), *ENC] if vf else ["-c:v", "copy"]
+        # Pad the narration with silence to the picture's exact length, so audio and video
+        # stay aligned across the concat. (apad + -shortest never ends with a copied stream.)
+        total = d + (TAIL if last else 0)
         subprocess.run([FF, "-y", "-loglevel", "error", "-i", v, "-i", a, *vargs,
-                        "-af", "apad", "-shortest", "-c:a", "aac", "-b:a", "160k", out], check=True)
+                        "-af", f"apad=whole_dur={total}", "-c:a", "aac", "-b:a", "160k", out],
+                       check=True)
         parts.append(out)
         print(f"  {sid}: fade in {'yes' if fade_in else 'no (chained)'}, "
               f"fade out {'yes' if fade_out else 'no (chained)'}")
