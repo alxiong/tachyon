@@ -286,8 +286,10 @@ def save_words(voice: dict, sid: str, ws: list[dict]) -> None:
     path = f"{HERE}/{voice['dir']}/words.json"
     data = json.load(open(path)) if os.path.exists(path) else {}
     data[sid] = ws
-    json.dump(dict(sorted(data.items(), key=lambda kv: [int(x) for x in kv[0].split(".")])),
-              open(path, "w"), indent=0)
+    # One line per scene: compact, and a retake only changes its own line in a diff.
+    rows = [f"{json.dumps(sid)}: {json.dumps(ws, separators=(',', ':'))}"
+            for sid, ws in sorted(data.items(), key=lambda kv: [int(x) for x in kv[0].split(".")])]
+    open(path, "w").write("{\n" + ",\n".join(rows) + "\n}\n")
 
 
 def finalize(voice: dict, sid: str, body: str) -> None:
