@@ -7,9 +7,9 @@ use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGr
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp};
 use ragu::{Pcd, Proof};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _, PoseidonPermutation as _};
+use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_pasta::{Pasta, PoseidonFp};
+use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
@@ -134,9 +134,9 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     anchor: Anchor,
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>) {
-    let (rcv, alpha, plan) = build_output_plan(rng, note);
-    let (tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let (rcv, _alpha, plan) = build_output_plan(rng, note);
+    let (_digests, tachygrams, stamp_anchor, proof) =
+        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
@@ -166,12 +166,11 @@ pub fn build_autonome<RNG: CryptoRng>(
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
-    let spend_epoch = height.epoch();
     let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(spend_note, spendable_pcd, spend_epoch)],
+        alloc::vec![(spend_note, spendable_pcd)],
         alloc::vec![output_note],
     )
 }
@@ -1026,8 +1025,8 @@ pub struct WalletSim {
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
-    /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
-    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteMaster>>>,
+    /// Per-note `NoteSecret` PCDs, keyed by the note's `cm` tachygram.
+    pub secrets: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteSecret>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
     /// epoch_end)`: repeated derivations of the same exact range share the
     /// proof.
@@ -1040,7 +1039,7 @@ impl WalletSim {
             sk,
             pak: sk.derive_proof_private(),
             notes: RefCell::new(BTreeMap::new()),
-            masters: RefCell::new(BTreeMap::new()),
+            secrets: RefCell::new(BTreeMap::new()),
             derivations: RefCell::new(BTreeMap::new()),
         }
     }
@@ -1091,15 +1090,15 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
-    /// The certified master-key seed PCD for this note, cached by `cm`. The
+    /// The certified `NoteSecret` PCD for this note, cached by `cm`. The
     /// note is witnessed once; every window fuses against the same seed.
-    pub fn master_pcd<RNG: CryptoRng>(
+    pub fn secret_pcd<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         note: Note,
-    ) -> Pcd<delegation::NoteMaster> {
+    ) -> Pcd<delegation::NoteSecret> {
         let cm = Tachygram::from(note.commitment());
-        if let Some(pcd) = self.masters.borrow().get(&cm) {
+        if let Some(pcd) = self.secrets.borrow().get(&cm) {
             return pcd.clone();
         }
         let (pcd, ()) = PROOF_SYSTEM
@@ -1110,7 +1109,7 @@ impl WalletSim {
             )
             .expect("NoteSeed");
 
-        self.masters.borrow_mut().insert(cm, pcd.clone());
+        self.secrets.borrow_mut().insert(cm, pcd.clone());
         pcd
     }
 
@@ -1135,7 +1134,7 @@ impl WalletSim {
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
-        let master = self.master_pcd(rng, note);
+        let secret = self.secret_pcd(rng, note);
 
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
@@ -1146,8 +1145,8 @@ impl WalletSim {
                 .fuse(
                     rng,
                     delegation::NullifierDerive,
-                    witness::nullifier_derive((*master.data(), ()), chunk_start),
-                    master.clone(),
+                    witness::nullifier_derive((*secret.data(), ()), chunk_start),
+                    secret.clone(),
                     Proof::trivial().carry::<()>(()),
                 )
                 .expect("NullifierDerive");
@@ -1331,27 +1330,21 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, Pcd<spendable::NoteSpendable>, EpochIndex)>,
+        spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derivation_pcd(
-                rng,
-                note,
-                spend_epoch,
-                EpochIndex::new(u32::from(spend_epoch) + 1),
-            );
+        for (note, spendable_pcd) in spends {
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, spendable_pcd));
+            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1481,15 +1474,6 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
     Fp::from_uniform_bytes(&wide)
-}
-
-/// The point $[x] \cdot G_0$ a step absorbs for a pinned scalar.
-pub fn pinned_point(x: Fp) -> Eq {
-    let &g0 = Pasta::host_generators(Pasta::baked())
-        .g()
-        .first()
-        .expect("at least one generator");
-    g0 * x
 }
 
 /// Another member at `epoch` whose indexed factor

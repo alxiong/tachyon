@@ -14,7 +14,7 @@ Multiple parties execute the proof tree.
 ### Deriving nullifiers
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
-`NoteSeed` witnesses the note and the proof-authorizing key `pak`, checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits an `NoteMaster` carrying `(cm, mk)`. `nk` never leaves the step.
+`NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteSecret` carrying `(cm, note, mk)`. `nk` never leaves the step.
 `NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
@@ -53,19 +53,18 @@ A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, inclu
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, and witnesses the pair `(nf_current, nf_next)`.
-It requires `range.cm == spendable.cm`, then confirms the published pair by dividing two adjacent factors out of the derivation's sequence, one indexed at the lineage's epoch and one at the next.
-The challenge absorbs both nullifiers, so they are forced to the genuine nullifiers of the lineage's epoch and the epoch after it.
+It consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
+It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the lineage's epoch and the epoch after it, and commits the note's value as `cv` under the witnessed value-randomness.
 Nonzero guards close the `nf == 0` degenerate.
-The output `SpendHeader` carries `cm`, the confirmed pair `(nf_current, nf_next)`, and the threaded anchor; it carries no curve points.
+The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
 
-`SpendStamp` consumes that `SpendHeader` and witnesses the note and the action fields.
-It requires `note.commitment() == cm`, so the witnessed note is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
-It derives the action digest from `cv` and the randomized action key `rk`, and emits a `Stamp` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+`SpendStamp` consumes that `SpendHeader`, witnessing the action-randomness and the proof authorizing key.
+It requires the key to derive the header's `pk`, so the randomized action key `rk` belongs to the lineage's note, whose minted value `cv` commits to[^notes].
+It derives the action digest from `cv` and `rk`, and emits a `Stamp` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
 
-An output operation splits the same way, into `OutputBind` and `OutputStamp`.
-`OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and nothing else.
-`OutputStamp` re-witnesses the note against `cm`, adds value-randomness, action-randomness, and an anchor, and emits a single-action `Stamp` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
+An output operation also takes two steps, `OutputBind` and `OutputStamp`.
+`OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and the value commitment `cv`.
+`OutputStamp` adds action-randomness and an anchor, and emits a single-action `Stamp` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
 
 A transaction with multiple spend and output stamps composes them with `StampMerge`.
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
@@ -212,7 +211,7 @@ Membership needs no profile: every bucket divides the epoch's stamp polynomials,
 
 ### Derivation window
 
-`NoteSeed` is the only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
+`NoteSeed` is the only seed. It binds the master key to the note: deriving `pk` from `pak` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
 `NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at a fresh challenge $z$:
 
 $$g(z) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(z)$$
@@ -251,26 +250,39 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
-`SpendBind` consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, witnesses `nf_current` and `nf_next`, and requires `range.cm == spendable.cm`.
-Dividing two adjacent factors out of the derivation's sequence confirms the pair. Both nullifiers are free and pinned by their scalar-binding points, absorbed into the challenge. Adjacency is the factor indices $e$ and $e+1$, with $e$ the lineage's epoch.
+`SpendBind` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
+It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-No note witness is needed here: the range and the lineage are already tied to the same note by their two `cm` fields, bound where the range was derived and at `SpendableInit` respectively.
-The output `SpendHeader` threads `cm`, the confirmed pair, and the anchor, and carries no curve points.
+`SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
+The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with the note's `pk` and `cv`.
 
-`SpendStamp` completes the publication: it re-witnesses the note against the header's `cm`, derives the value commitment `cv` and the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
-Requiring `note.commitment() == cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
-The note is witnessed only in this last step, so it never propagates.
+`NoteSeed` computed the secret's `cm` from its note, so `secret.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
+The note rides only on the wallet-private `NoteSecret`, so it never reaches a published header.
 
-The two complementary `cm` checks pin value two independent ways. `cm == note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
+`SpendStamp` completes the publication: it requires the witnessed proof authorizing key to derive the header's `pk`, derives the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
+
+The two complementary `cm` checks pin value two independent ways. `NoteSeed`'s `cm = note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
 The note's age never becomes public. The lineage carries only a single current nullifier, not a polynomial with a consumed offset, and the published pair sits at the constant epochs of the live range, so no step reads a position that would leak how long the note has existed.
 
 ### Stamp construction
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
-`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists. Each is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
-`OutputStamp` then derives a value commitment, action verification key, and action digest from a re-witnessed note, value-randomness, and action-randomness; constraints tie the note to the header's `cm` and reject over-range note values. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
-`SpendStamp` mirrors it on the spend side: it re-witnesses the note against the `SpendHeader`'s `cm`, derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was already confirmed against the covering range at `SpendBind`.
+`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and rejects over-range values. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
+Beside the pair it carries the value commitment $\mathsf{cv} = [-v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$.
+`OutputStamp` reads `cv` off the `OutputHeader`, then derives an action verification key and action digest. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
+`SpendStamp` reads `cv` off the `SpendHeader`, derives the action verification key and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
+
+Each action takes two steps because its work exceeds one step's budget: a Poseidon permutation costs about a seventh of a step, and a scalar multiplication about a quarter.
+The work splits as follows, each stamp step also opening its action-set and tachygram-set polynomials:
+
+| Step | Permutations | Scalar multiplications |
+| ---- | ------------ | ---------------------- |
+| OutputBind | 4 (`cm`, `pad`) | 2 (`cv`) |
+| OutputStamp | 2 (action digest) | 1 (`rk`) |
+| SpendBind | 2 (nullifier pair) | 2 (`cv`) |
+| SpendStamp | 3 (`pk`, action digest) | 1 (`rk`) |
+
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
 ### Stamp anchor
@@ -296,7 +308,7 @@ A transaction with one spend and one output, where the spendable was bootstrappe
 ```mermaid
 flowchart TB
   subgraph derive [nullifier derivation]
-    w_seed[/note, pak/]
+    w_seed[/value, psi, rcm, pak/]
     s_seed[NoteSeed]
     w_window[/epoch_start, seq/]
     s_window[NullifierDerive]
@@ -315,16 +327,16 @@ flowchart TB
   end
 
   subgraph spend_stamp [spend action]
-    w_bind[/nf_current, nf_next/]
+    w_bind[/rcv/]
     s_bind[SpendBind]
   end
 
   subgraph merge [transaction assembly]
-    w_stamp[/note, rcv, alpha, pak/]
+    w_stamp[/alpha, pak/]
     s_spendstamp[SpendStamp]
     w_outbind[/note/]
     s_outbind[OutputBind]
-    w_output[/rcv, alpha, note, anchor/]
+    w_output[/rcv, alpha, anchor/]
     s_output[OutputStamp]
     s_merge[StampMerge]
   end
@@ -332,7 +344,7 @@ flowchart TB
   stamp_out((Stamp))
 
   w_seed --> s_seed
-  s_seed -->|NoteMaster| s_window
+  s_seed -->|NoteSecret| s_window
   w_window --> s_window
   s_window -->|NoteNullifiers| s_dfuse
   s_dfuse --> nf_range
@@ -346,8 +358,8 @@ flowchart TB
   s_unspentbind -->|NoteUnspent| s_lift
   s_lift -->|NoteSpendable| s_bind
 
+  s_seed -->|NoteSecret| s_bind
   w_bind --> s_bind
-  nf_range -->|NoteNullifiers| s_bind
   s_bind -->|SpendHeader| s_spendstamp
   w_stamp --> s_spendstamp
 
@@ -426,11 +438,11 @@ flowchart LR
 | QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
 | ArbitraryUnspent | (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) |
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) |
-| NoteMaster | (cm, mk) |
+| NoteSecret | (cm, note, mk) |
 | NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
 | NoteSpendable | (cm, epoch_current, anchor) |
-| OutputHeader | (cm, pad) |
-| SpendHeader | (cm, nf_current, nf_next, anchor) |
+| OutputHeader | (cm, pad, cv) |
+| SpendHeader | (cm, nf_current, nf_next, anchor, pk, cv) |
 | Stamp | (action_commit, stamp_tg_commit, anchor) |
 
 ## Steps
@@ -453,15 +465,15 @@ flowchart LR
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, elapsed_seq, extended_seq, contents | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
-| NoteSeed | — | — | note, pak | NoteMaster |
-| NullifierDerive | NoteMaster | — | epoch_start, seq | NoteNullifiers |
+| NoteSeed | — | — | value, psi, rcm, pak | NoteSecret |
+| NullifierDerive | NoteSecret | — | epoch_start, seq | NoteNullifiers |
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
-| SpendBind | NoteSpendable | NoteNullifiers | nf_seq, complement_seq, nf_current, nf_next | SpendHeader |
-| OutputBind | — | — | note | OutputHeader |
-| OutputStamp | OutputHeader | — | rcv, alpha, note, anchor, action_set, tachygram_set | Stamp |
-| SpendStamp | SpendHeader | — | note, rcv, alpha, pak, action_set, tachygram_set | Stamp |
+| SpendBind | NoteSpendable | NoteSecret | rcv | SpendHeader |
+| OutputBind | — | — | note, rcv | OutputHeader |
+| OutputStamp | OutputHeader | — | alpha, anchor, action_set, tachygram_set | Stamp |
+| SpendStamp | SpendHeader | — | alpha, pak, action_set, tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorChain | — | Stamp |
 

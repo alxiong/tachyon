@@ -32,9 +32,8 @@ use crate::{
     bundle::{BundleState, StateByte},
     digest::blake2b,
     effect,
-    entropy::ActionRandomizer,
-    keys::ProofAuthorizingKey,
-    nullifier::Nullifier,
+    entropy::ActionEntropy,
+    keys::{ProofAuthorizingKey, private},
     primitives::{
         ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
     },
@@ -339,28 +338,19 @@ impl ProofStamp {
 
 /// Everything needed to produce a [`ProofStamp`].
 ///
-/// Each action is described by a public descriptor `(cv, rk)` and a
-/// private witness `(alpha, note, rcv)`. The `prove` method generates
-/// a leaf proof for each action, then merges pairwise into a single
-/// stamp.
+/// The statement is each action's descriptor `(cv, rk)` and the `anchor`.
+/// The planned witnesses are each action's `theta` and `rcv`, and each
+/// output's `note`. A spend's note comes from its
+/// [`NoteSecret`](delegation::NoteSecret) PCD at
+/// [`prove`](Self::prove).
 ///
-/// Construct via [`Plan::new`] with pre-derived action witnesses, or
-/// via [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan)
-/// for the typed single-party path.
+/// Construct via [`Plan::new`], or via
+/// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
+/// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<(
-        action::Descriptor,
-        ActionRandomizer<effect::Spend>,
-        Note,
-        value::Trapdoor,
-    )>,
-    outputs: Vec<(
-        action::Descriptor,
-        ActionRandomizer<effect::Output>,
-        Note,
-        value::Trapdoor,
-    )>,
+    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
     anchor: Anchor,
 }
 
@@ -368,18 +358,8 @@ impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses.
     #[must_use]
     pub const fn new(
-        spends: Vec<(
-            action::Descriptor,
-            ActionRandomizer<effect::Spend>,
-            Note,
-            value::Trapdoor,
-        )>,
-        outputs: Vec<(
-            action::Descriptor,
-            ActionRandomizer<effect::Output>,
-            Note,
-            value::Trapdoor,
-        )>,
+        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+        outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
     ) -> Self {
         Self {
@@ -391,37 +371,34 @@ impl Plan {
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// For each **spend**, uses [`spend::SpendBind`] to prepare PCD inputs,
-    /// then runs [`SpendStamp`] to attach the live nullifier pair.
+    /// `spend_pcds` pairs with the planned spends by position. For each
+    /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
+    /// [`ProofStamp::prove_spend`] proves the action. For each **output**,
+    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
-    /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
-    ///
-    /// Stamps are recursively merged via [`StampMerge`] into a single stamp.
-    ///
-    /// `spend_pcds` items must correspond to each planned spend, in
-    /// order.
+    /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
+    /// whose coverage is the planned descriptors.
     ///
     /// TODO: provide a way to lift spend stamps when necessary to merge
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if the number of spend PCDs does not match the
-    /// planned spends, an action digest cannot be computed, or a proof-system
-    /// step fails.
+    /// - [`ProveError::MissingPcd`] if the plan has no actions, or the number
+    ///   of spend PCDs does not match the planned spends.
+    /// - [`ProveError::ActionDigest`] if a proved action has no digest.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NoteNullifiers>,
+            ragu::Pcd<delegation::NoteSecret>,
             ragu::Pcd<spendable::NoteSpendable>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
-        // Each entry pairs leaf stamp components with the descriptor and
-        // action digest of its covered action; merges concatenate both
-        // lists. Digests are computed once per leaf and carried through the
-        // fold rather than re-derived at each merge step. The covered-actions
-        // digest is computed once, on the final stamp.
+        // Each entry pairs leaf stamp components with the descriptor of its
+        // covered action; merges concatenate both. The covered-actions digest
+        // is computed once, on the final stamp.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spend_pcds.len() {
@@ -435,56 +412,32 @@ impl Plan {
             ));
         }
 
-        for ((desc, alpha, note, rcv), (range_pcd, spendable_pcd)) in
+        for ((desc, theta, rcv), (secret_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
-            // SpendBind: confirm the live pair against the covering
-            // derivation. The covering sequence is rebuilt natively from the
-            // note's master key (the succinct header carries only the
-            // commitment); the witness segments its read and complement.
-            let mk = pak.nk.derive_note_private(note.psi);
-            let (_, nullifiers_epoch_start, _, nullifiers_epoch_end) = *range_pcd.data();
-            let window: Vec<Nullifier> = (u32::from(nullifiers_epoch_start)
-                ..=u32::from(nullifiers_epoch_end))
-                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
-                .collect();
-            let bind_witness =
-                witness::spend_bind((*spendable_pcd.data(), *range_pcd.data()), &window);
+            // SpendBind: derive the live pair from the note's master key and
+            // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spend::SpendBind,
-                    bind_witness,
-                    spendable_pcd,
-                    range_pcd,
-                )
+                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: prove the action and publish. The tachygram pair is
-            // read straight off the bind header.
-            let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
-                    .map_err(ProveError::ProofFailed)?;
-
-            let digest = desc.digest().map_err(ProveError::ActionDigest)?;
+            let (digests, tachygrams, anchor, proof) =
+                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
             entries.push((
                 BTreeSet::from_iter([desc]),
-                BTreeSet::from_iter([digest]),
+                digests,
                 tachygrams,
                 anchor,
                 proof,
             ));
         }
 
-        for (desc, alpha, note, rcv) in self.outputs {
-            let (tachygrams, anchor, proof) =
-                ProofStamp::prove_output(rng, rcv, alpha, note, self.anchor)
-                    .map_err(ProveError::ProofFailed)?;
-
-            let digest = desc.digest().map_err(ProveError::ActionDigest)?;
+        for (desc, theta, note, rcv) in self.outputs {
+            let (digests, tachygrams, anchor, proof) =
+                ProofStamp::prove_output(rng, theta, rcv, note, self.anchor)?;
             entries.push((
                 BTreeSet::from_iter([desc]),
-                BTreeSet::from_iter([digest]),
+                digests,
                 tachygrams,
                 anchor,
                 proof,
@@ -594,75 +547,109 @@ type StampComponents = (
 
 impl ProofStamp {
     /// Proves a single output action, returning the stamp components
-    /// `(tachygrams, anchor, proof)`.
+    /// `(digests, tachygrams, anchor, proof)`.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
-    /// proves the action over it and enforces the stamp accumulator. Both
-    /// tachygrams are derived inside the circuit and placed on the stamp for
-    /// data availability.
+    /// proves the action over it with `alpha` derived from `theta` and the
+    /// note's commitment, and enforces the stamp accumulator. Both tachygrams
+    /// are derived inside the circuit and placed on the stamp for data
+    /// availability. `digests` holds the proved action's digest.
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
+        theta: ActionEntropy,
         rcv: value::Trapdoor,
-        alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,
-    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
-        let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
-        let (cm, pad) = *bind_pcd.data();
-        #[expect(clippy::tuple_array_conversions, reason = "required")]
+    ) -> Result<StampComponents, ProveError> {
+        let alpha = theta.randomizer::<effect::Output>(note.commitment());
+        let digest = ActionDigest::new(
+            rcv.commit(-note.value),
+            private::ActionSigningKey::new(&alpha).derive_action_public(),
+        )
+        .map_err(ProveError::ActionDigest)?;
+
+        let (bind_pcd, ()) = PROOF_SYSTEM
+            .seed(rng, output::OutputBind, (note, rcv))
+            .map_err(ProveError::ProofFailed)?;
+        let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
-        let (pcd, ()) = PROOF_SYSTEM.fuse(
-            rng,
-            OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, note, anchor),
-            bind_pcd,
-            ragu::Proof::trivial().carry::<()>(()),
-        )?;
-        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                OutputStamp,
+                witness::output_stamp((*bind_pcd.data(), ()), alpha, anchor),
+                bind_pcd,
+                ragu::Proof::trivial().carry::<()>(()),
+            )
+            .map_err(ProveError::ProofFailed)?;
+        let rerand = PROOF_SYSTEM
+            .rerandomize(pcd, rng)
+            .map_err(ProveError::ProofFailed)?;
 
-        Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
+        Ok((
+            BTreeSet::from_iter([digest]),
+            tachygrams,
+            anchor,
+            Box::new(rerand.proof().clone()),
+        ))
     }
 
-    /// Creates a stamp for a spend action from a bound
-    /// [`SpendHeader`](spend::SpendHeader) PCD.
+    /// Proves a single spend action from a bound
+    /// [`SpendHeader`](spend::SpendHeader) PCD, returning the stamp
+    /// components `(digests, tachygrams, anchor, proof)`.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
-    /// availability is read straight off the bind header (already confirmed
-    /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
-    /// proves the action `(cv, rk)` and enforces the stamp accumulator over
-    /// the pair. The spend's `anchor` is taken as the stamp's anchor; chain
-    /// validation lives inside the spendable lineage.
+    /// availability and the value commitment `cv` are read straight off the
+    /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
+    /// [`SpendStamp`] proves the action `(cv, rk)` with `alpha` derived from
+    /// `theta` and the bound note commitment, and enforces the stamp
+    /// accumulator over the pair. The spend's `anchor` is taken as the stamp's
+    /// anchor; chain validation lives inside the spendable lineage. `digests`
+    /// holds the proved action's digest.
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
+        theta: ActionEntropy,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        note: Note,
-        rcv: value::Trapdoor,
-        alpha: ActionRandomizer<effect::Spend>,
         pak: ProofAuthorizingKey,
-    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
-        let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
+    ) -> Result<StampComponents, ProveError> {
+        let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
+        let alpha = theta.randomizer::<effect::Spend>(cm);
+        let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))
+            .map_err(ProveError::ActionDigest)?;
+
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
-        let (pcd, ()) = PROOF_SYSTEM.fuse(
-            rng,
-            SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), note, rcv, alpha, pak),
-            bind_pcd,
-            ragu::Proof::trivial().carry::<()>(()),
-        )?;
-        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                SpendStamp,
+                witness::spend_stamp((*bind_pcd.data(), ()), alpha, pak),
+                bind_pcd,
+                ragu::Proof::trivial().carry::<()>(()),
+            )
+            .map_err(ProveError::ProofFailed)?;
+        let rerand = PROOF_SYSTEM
+            .rerandomize(pcd, rng)
+            .map_err(ProveError::ProofFailed)?;
 
-        Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
+        Ok((
+            BTreeSet::from_iter([digest]),
+            tachygrams,
+            anchor,
+            Box::new(rerand.proof().clone()),
+        ))
     }
 
     /// Proves the merge of two stamps, returning the merged stamp

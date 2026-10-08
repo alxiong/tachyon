@@ -7,37 +7,42 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{Tachygram, digest::poseidon, note::Note, ragu_constraint::enforce_nonzero};
+use crate::{
+    Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note,
+    ragu_constraint::enforce_nonzero, value,
+};
 
-/// Header binding an output's tachygram pair to one note.
+/// Header binding an output's tachygram pair and value to one note
+/// (wallet-only).
 ///
-/// Carries the note commitment `cm` and the padding tachygram `pad`, both
-/// derived from the same note. The action pair `(cv, rk)` is produced
+/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
+/// value commitment `cv`, all derived from the same note. `rk` is produced
 /// downstream at [`OutputStamp`](super::stamp::OutputStamp).
 #[derive(Debug)]
 pub struct OutputHeader;
 
 impl Header for OutputHeader {
-    /// `(cm, pad)`, the two tachygrams the output publishes.
-    type Data = (Tachygram, Tachygram);
+    /// `(cm, pad, cv)`
+    type Data = (Tachygram, Tachygram, value::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, pad) = *data;
+        let (cm, pad, cv) = *data;
         (
             vec![Fp::from(cm), Fp::from(pad)],
             Vec::new(),
-            Vec::new(),
+            vec![Ep::from(cv)],
             Vec::new(),
         )
     }
 }
 
-/// Derives an output's tachygram pair from one note.
+/// Derives an output's tachygram pair from one note, and commits its negated
+/// value as
+/// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Later, [`super::stamp::OutputStamp`] re-witnesses the note and opens its
-/// commitment, which ties the action to this pair.
+/// Four permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
 #[derive(Debug)]
 pub struct OutputBind;
 
@@ -46,18 +51,24 @@ impl Step for OutputBind {
     type Left = ();
     type Output = OutputHeader;
     type Right = ();
-    /// `(note,)`.
-    type Witness<'source> = (Note,);
+    /// `(note, rcv)`.
+    type Witness<'source> = (Note, value::Trapdoor);
 
     const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note,): Self::Witness<'source>,
+        (note, rcv): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        if u64::from(note.value) > MAX_MONEY {
+            return Err(ragu_core::Error::InvalidWitness(
+                "OutputBind: note value exceeds maximum".into(),
+            ));
+        }
+
         let (cm, pad) = {
             let (rcm, pk, value, psi) = (
                 Fp::from(note.rcm),
@@ -76,6 +87,6 @@ impl Step for OutputBind {
         enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
         enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
 
-        Ok(((cm, pad), ()))
+        Ok(((cm, pad, rcv.commit(-note.value)), ()))
     }
 }

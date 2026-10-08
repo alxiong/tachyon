@@ -7,8 +7,8 @@ use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, EpochIndex, ProofStamp, Tachygram,
-    TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
+    TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
     stamp::{Plan, ProveError},
@@ -63,39 +63,46 @@ fn stamp_merge_iff_matching_anchors() {
 fn plan_prove_rejects_invalid_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
+    let other = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
 
+    // Same value, so swapped notes differ only in their commitments.
     let note_a = user.random_note(500);
-    let note_b = user.random_note(700);
+    let note_b = user.random_note(500);
     pool.mine(random_block_with(
         rng,
-        &[vec![note_a.commitment()], vec![note_b.commitment()]],
+        &[vec![note_a.commitment(), note_b.commitment()]],
         50,
     ));
     let height = pool.height();
-    let anchor = pool.block(height).anchor();
-    let spend_epoch = height.epoch();
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let spend_end = EpochIndex::new(u32::from(spend_epoch) + 1);
-    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_end);
-    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_end);
+    let anchor = sp_a.data().2;
+    assert_eq!(
+        anchor,
+        sp_b.data().2,
+        "same-stamp spendables share an anchor"
+    );
 
-    let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
+    let (rcv_a, theta_a, _alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let (rcv_b, theta_b, alpha_b) = spend_witness(rng, &note_b);
+    let (rcv_b, theta_b, _alpha_b) = spend_witness(rng, &note_b);
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
+    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+        other.pak.ak.derive_action_public(&alpha)
+    });
+
     let two_spends = || {
         alloc::vec![
-            (plan_a.descriptor(), alpha_a, note_a, rcv_a),
-            (plan_b.descriptor(), alpha_b, note_b, rcv_b),
+            (plan_a.descriptor(), theta_a, rcv_a),
+            (plan_b.descriptor(), theta_b, rcv_b),
         ]
     };
 
@@ -110,8 +117,10 @@ fn plan_prove_rejects_invalid_inputs() {
         assert_eq!(reason.to_string(), "no proof for no planned actions");
     }
 
-    let bundle_a = || (range_a.clone(), sp_a.clone());
-    let bundle_b = || (range_b.clone(), sp_b.clone());
+    let secret_a = user.secret_pcd(rng, note_a);
+    let secret_b = user.secret_pcd(rng, note_b);
+    let bundle_a = || (secret_a.clone(), sp_a.clone());
+    let bundle_b = || (secret_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -143,19 +152,44 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    // Correspondence swap: lengths match, pairing is wrong. The spend's note
-    // key rebuilds a covering sequence that cannot match the mispaired
-    // derivation's commitment, so SpendBind rejects.
+    // Correspondence swap: lengths match, pairing is wrong. Each spend's secret
+    // carries another note of the same value, so only `alpha` tells them apart.
+    // The swapped actions prove, and the stamp does not verify as the plan's.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
-        let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(reason)) = err else {
-            panic!("expected ProofFailed(InvalidWitness), got {err:?}");
-        };
-        assert_eq!(
-            reason.to_string(),
-            "SpendBind: covering sequence does not match header"
+        let stamp = plan
+            .prove(rng, &user.pak, pcds)
+            .expect("swapped spends prove");
+        let planned = [
+            plan_a.digest().expect("action digest"),
+            plan_b.digest().expect("action digest"),
+        ];
+        assert!(
+            !stamp
+                .verify_proof(rng, planned)
+                .expect("proof system verification"),
+            "a stamp of swapped notes must not verify as the planned actions"
+        );
+    }
+
+    // Foreign descriptor: a single spend whose planned `rk` is under another
+    // wallet's `ak`. The spend proves under this wallet's `ak`, and the stamp
+    // does not verify as the plan's.
+    {
+        let plan = Plan::new(
+            alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+            alloc::vec![],
+            anchor,
+        );
+        let stamp = plan
+            .prove(rng, &user.pak, alloc::vec![bundle_a()])
+            .expect("foreign spend proves");
+        assert!(
+            !stamp
+                .verify_proof(rng, [foreign_a.digest().expect("action digest")])
+                .expect("proof system verification"),
+            "a stamp under another ak must not verify as the planned action"
         );
     }
 }
@@ -308,19 +342,8 @@ fn double_spend_cannot_aggregate() {
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend, sp_a, spend_epoch)],
-        vec![output_a],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend, sp_b, spend_epoch)],
-        vec![output_b],
-    );
+    let autonome_a = wallet.autonome(rng, anchor, vec![(spend, sp_a)], vec![output_a]);
+    let autonome_b = wallet.autonome(rng, anchor, vec![(spend, sp_b)], vec![output_b]);
 
     let stamp_a = autonome_a.stamp.clone();
     let stamp_b = autonome_b.stamp.clone();

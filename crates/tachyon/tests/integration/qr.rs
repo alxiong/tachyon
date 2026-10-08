@@ -21,7 +21,7 @@ use zcash_tachyon::{
         pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
-    witness,
+    value, witness,
 };
 
 use crate::fixtures::{
@@ -1897,20 +1897,12 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     );
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
-    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex::new(u32::from(epoch2) + 1));
+    let secret = user.secret_pcd(rng, note);
+    let rcv = value::Trapdoor::random(rng);
     let (bind, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spend::SpendBind,
-            witness::spend_bind(
-                (*lifted.data(), *derived.data()),
-                &user.covering_window(&note, &derived),
-            ),
-            lifted,
-            derived,
-        )
+        .fuse(rng, spend::SpendBind, (rcv,), lifted, secret)
         .expect("SpendBind");
-    let (bind_cm, nf_current, nf_next, _) = *bind.data();
+    let (bind_cm, nf_current, nf_next, ..) = *bind.data();
     assert_eq!(bind_cm, note.commitment());
     assert_eq!(
         (nf_current, nf_next),

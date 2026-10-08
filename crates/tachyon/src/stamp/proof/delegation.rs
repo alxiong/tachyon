@@ -22,30 +22,44 @@ use crate::{
     constants::EPOCH_MAX,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::NF_DERIVATION_WIDTH,
+    nullifier::{self, NF_DERIVATION_WIDTH},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
+    value,
 };
 
-/// A note's certified commitment and master key (wallet-only).
+/// A note's certified record: its commitment, its opening, and its master key
+/// (wallet-only).
 ///
 /// `mk` is derived natively from the note's secrets and certified here, so
 /// every consuming [`NullifierDerive`] threads a genuine master key without
-/// re-witnessing the note. `cm` rides along for the derivation's consumers to
-/// bind against.
+/// re-witnessing the note. `note` is the opening `cm` commits to.
+/// [`SpendBind`](super::spend::SpendBind) reads it.
 #[derive(Clone, Debug)]
-pub struct NoteMaster;
+pub struct NoteSecret;
 
-impl Header for NoteMaster {
-    /// `(cm, mk)`.
-    type Data = (note::Commitment, NoteMasterKey);
+impl Header for NoteSecret {
+    /// `(cm, note, mk)`
+    type Data = (note::Commitment, Note, NoteMasterKey);
 
     const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, mk) = *data;
-        (vec![Fp::from(cm), mk.0], Vec::new(), Vec::new(), Vec::new())
+        let (cm, note, mk) = *data;
+        (
+            vec![
+                Fp::from(cm),
+                Fp::from(note.rcm),
+                Fp::from(note.pk),
+                Fp::from(u64::from(note.value)),
+                Fp::from(note.psi),
+                mk.0,
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -87,17 +101,17 @@ impl Header for NoteNullifiers {
 
 /// Certify a note's commitment and master key.
 ///
-/// Seed step. Witnesses the note and its proof authorizing key, proves the
-/// key belongs to the note (`note.pk == pak.derive_payment_key()`, which pins
-/// `nk`), derives `mk` from `nk` and the note's trapdoor, and computes `cm`.
-/// `nk` never leaves the step; only `pk`, which preimage-hides it, enters
-/// `cm`.
+/// Seed step. Witnesses the note's value and trapdoors and its proof
+/// authorizing key. The note's payment key is derived from `pak`, which pins
+/// `nk`; `mk` is derived from `nk` and `psi`; and `cm` commits to the
+/// assembled note. `nk` never leaves the step; only `pk`, which
+/// preimage-hides it, enters `cm`.
 ///
 /// # Soundness
 ///
 /// A seed can invent a note, so `cm` closes downstream, at
 /// [`SpendableInit`](super::spendable::SpendableInit) and
-/// [`SpendStamp`](super::stamp::SpendStamp). What this step establishes is
+/// [`SpendBind`](super::spend::SpendBind). What this step establishes is
 /// the pairing: `mk` is *this* `cm`'s master key.
 #[derive(Debug)]
 pub struct NoteSeed;
@@ -105,27 +119,34 @@ pub struct NoteSeed;
 impl Step for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NoteMaster;
+    type Output = NoteSecret;
     type Right = ();
-    /// `(note, pak)`
-    type Witness<'source> = (Note, ProofAuthorizingKey);
+    /// `(value, psi, rcm, pak)`
+    type Witness<'source> = (
+        value::Positive,
+        nullifier::Trapdoor,
+        note::CommitmentTrapdoor,
+        ProofAuthorizingKey,
+    );
 
     const INDEX: Index = Index::new(0);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note, pak): Self::Witness<'source>,
+        (value, psi, rcm, pak): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
-            "NoteSeed: pak not related to note",
-        )?;
+        let note = Note {
+            pk: pak.derive_payment_key(),
+            value,
+            psi,
+            rcm,
+        };
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
-        Ok(((cm, mk), ()))
+        Ok(((cm, note, mk), ()))
     }
 }
 
@@ -162,7 +183,7 @@ pub struct NullifierDerive;
 
 impl Step for NullifierDerive {
     type Aux<'source> = ();
-    type Left = NoteMaster;
+    type Left = NoteSecret;
     type Output = NoteNullifiers;
     type Right = ();
     /// `(epoch_start, seq)`
@@ -174,7 +195,7 @@ impl Step for NullifierDerive {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (epoch_start, seq): Self::Witness<'source>,
-        (cm, mk): <Self::Left as Header>::Data,
+        (cm, _note, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(

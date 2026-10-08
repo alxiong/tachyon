@@ -26,12 +26,10 @@ use crate::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
-        spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit},
         stamp::{OutputStamp, SpendStamp},
         summary::{SummaryAdvance, SummarySeed},
     },
-    value,
 };
 
 type StepLeft<S> = <<S as Step>::Left as Header>::Data;
@@ -40,14 +38,16 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NoteSeed`]: `(note, pak)`.
+/// Prepare the witness for [`NoteSeed`]: `(value, psi, rcm, pak)`.
+///
+/// `note.pk` is not read; the step derives the payment key from `pak`.
 #[must_use]
 pub const fn note_seed(
     (_left, _right): (StepLeft<NoteSeed>, StepRight<NoteSeed>),
     note: Note,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, NoteSeed> {
-    (note, pak)
+    (note.value, note.psi, note.rcm, pak)
 }
 
 /// Prepare the witness for [`NullifierDerive`]: `(epoch_start, seq)`.
@@ -60,7 +60,7 @@ pub fn nullifier_derive(
     (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
     epoch_start: EpochIndex,
 ) -> StepWitness<'static, NullifierDerive> {
-    let (_cm, mk) = left;
+    let (_cm, _note, mk) = left;
     (
         epoch_start,
         NfSeqPoly::new(epoch_start, &mk.derive_window(epoch_start)),
@@ -150,48 +150,6 @@ pub fn spendable_init(
         anchor_prev,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         creation_epoch,
-    )
-}
-
-/// Prepare the witness for [`SpendBind`]:
-/// `(nf_seq, complement_seq, nf_current, nf_next)`.
-///
-/// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; `(nf_current, nf_next)` is the pair at the
-/// spendable's epoch, and the complement is the window's runs on both sides of
-/// the pair, multiplied. The pair read requires the derivation range to extend
-/// at least one epoch past the spendable's epoch, which bounds the spendable
-/// epoch at `EPOCH_MAX - 1`: the final epoch has no member to pair with.
-#[must_use]
-#[expect(
-    clippy::as_conversions,
-    reason = "the derivation header's range covers the window"
-)]
-pub fn spend_bind(
-    (spendable, deriv): (StepLeft<SpendBind>, StepRight<SpendBind>),
-    window: &[Nullifier],
-) -> StepWitness<'static, SpendBind> {
-    let (_, epoch, _) = spendable;
-    let (_, nullifiers_epoch_start, ..) = deriv;
-    let lo = u32::from(epoch - nullifiers_epoch_start) as usize;
-    let (head, from_spend) = window.split_at(lo);
-    let (pair, tail) = from_spend.split_at(2);
-    let &[nf_current, nf_next] = pair else {
-        unreachable!("the read pair is in the window");
-    };
-    let complement_seq = NfSeqPoly::new(nullifiers_epoch_start, head)
-        * epoch.next().and_then(EpochIndex::next).map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
-    (
-        NfSeqPoly::new(nullifiers_epoch_start, window),
-        complement_seq,
-        nf_current,
-        nf_next,
     )
 }
 
@@ -440,77 +398,66 @@ pub fn unspent_lift(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, note, anchor,
-/// action_set, tachygram_set)`.
+/// Prepare the witness for [`OutputStamp`]: `(alpha, anchor, action_set,
+/// tachygram_set)`.
 ///
-/// Reads the tachygram pair off the bind header and derives the action from
-/// the note's negated value and `alpha`.
+/// Reads the tachygram pair and `cv` off the bind header and derives the
+/// action from `cv` and `alpha`.
 ///
 /// # Panics
 ///
-/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
+/// Panics when `cv` or `alpha` yields an identity point, leaving the action
 /// undigestible.
 #[must_use]
 pub fn output_stamp(
     (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
-    rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Output>,
-    note: Note,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
-    let (cm, pad) = left;
+    let (cm, pad, cv) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
     let digest = ActionDigest::new(
-        rcv.commit(-note.value),
+        cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
     .expect("action digest");
 
-    #[expect(clippy::tuple_array_conversions, reason = "required")]
     (
-        rcv,
         alpha,
-        note,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([cm, pad]),
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(note, rcv, alpha, pak,
-/// action_set, tachygram_set)`.
+/// Prepare the witness for [`SpendStamp`]: `(alpha, pak, action_set,
+/// tachygram_set)`.
 ///
-/// Reads the nullifier pair off the bind header and derives the action from
-/// the note's value and `pak` randomized by `alpha`.
+/// Reads the nullifier pair and `cv` off the bind header, and derives the
+/// action from `cv` and `pak` randomized by `alpha`.
 ///
 /// # Panics
 ///
-/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
-/// undigestible.
+/// Panics when `cv` or `rk` is the identity, leaving the action undigestible.
 #[must_use]
 pub fn spend_stamp(
     (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
-    note: Note,
-    rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Spend>,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, SpendStamp> {
-    let (_cm, nf_current, nf_next, _anchor) = left;
+    let (_cm, nf_current, nf_next, _anchor, _pk, cv) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(rcv.commit(note.value), pak.ak.derive_action_public(&alpha))
-        .expect("action digest");
+    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
     (
-        note,
-        rcv,
         alpha,
         pak,
         ActionSetPoly::from_iter([digest]),

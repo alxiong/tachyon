@@ -6,76 +6,83 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
-use super::{delegation::NoteNullifiers, spendable::NoteSpendable};
+use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    collections::indexed_multiset,
+    constants::MAX_MONEY,
+    keys::PaymentKey,
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, NfSeqPoly},
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    primitives::Anchor,
+    ragu_constraint::{enforce_nonzero, enforce_zero},
+    value,
 };
 
-/// Header binding a spend to its lineage note and epoch nullifier pair.
+/// Header binding a spend to its lineage note, epoch nullifier pair and value
+/// commitment.
 ///
 /// Carries the note commitment `cm`, the lineage's nullifier and its
-/// neighbour `(nf_current, nf_next)` confirmed against the covering range, and
-/// the pool `anchor`. `nf_next` is the member at `epoch_current + 1`;
+/// neighbour `(nf_current, nf_next)` derived from the note's master key, the
+/// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
 /// [`SpendStamp`](super::stamp::SpendStamp) publishes the pair unordered,
-/// and `_next` records how [`SpendBind`] established it. The action pair
-/// `(cv, rk)` is produced downstream at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// ties its `ak` to `pk`, and produces `rk`.
 #[derive(Debug)]
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, nf_current, nf_next, anchor)`. `cm` binds the spent note;
-    /// `nf_current` is the lineage's member and `nf_next` its neighbour one
-    /// epoch on; `anchor` threads the spendable lineage's pool position.
-    type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
+    /// `(cm, nf_current, nf_next, anchor, pk, cv)`. `cm` binds the spent
+    /// note; `nf_current` is the lineage's member and `nf_next` its neighbour
+    /// one epoch on; `anchor` threads the spendable lineage's pool position;
+    /// `pk` and `cv` come from the certified note.
+    type Data = (
+        note::Commitment,
+        Nullifier,
+        Nullifier,
+        Anchor,
+        PaymentKey,
+        value::Commitment,
+    );
 
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, nf_current, nf_next, anchor) = *data;
+        let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(nf_current),
                 Fp::from(nf_next),
                 Fp::from(anchor),
+                Fp::from(pk),
             ],
             Vec::new(),
-            Vec::new(),
+            vec![Ep::from(cv)],
             Vec::new(),
         )
     }
 }
 
-/// Confirms a spend's epoch nullifier pair against a covering
-/// [`NoteNullifiers`] and binds it to the spendable lineage.
+/// Derives a spend's epoch nullifier pair from the note's master key, commits
+/// the note's value, and binds both to the spendable lineage.
 ///
-/// The range is tied to the lineage's note by `nullifiers_cm == spendable_cm`
-/// (both are the note commitment, bound where the range was derived and at
-/// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
-/// note witness is needed here. Any range covering the lineage's epoch and
-/// the next serves: the divisibility of `nf_seq` by the product of the
-/// `nf_current` factor at $e$, the `nf_next` factor at $e+1$, and the
-/// complement confirms the pair at adjacent epochs. Both nullifiers are
-/// emitted on the [`SpendHeader`] for the action-producing step to publish.
+/// The secret is tied to the lineage's note by `secret_cm == spendable_cm`.
+/// The pair is `mk`'s nullifiers at the lineage's epoch $e$ and at $e + 1$,
+/// one group sponge each. Both are emitted on the [`SpendHeader`] for the
+/// action-producing step to publish, with the note's `pk` and
+/// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
+///
+/// Two permutations (the pair) and two scalar multiplications (`cv`).
 ///
 /// # Soundness
 ///
-/// Neither epoch index is free. `epoch_current` is a left-header field, fixed
-/// by the recursive verification of the spendable PCD, and adjacency is the
-/// pair's own epochs `e` and `e + 1`. `nf_current` and `nf_next` are free and
-/// absorbed into the challenge, so the divisibility forces them to the range's
-/// members at `e` and `e + 1`.
+/// `mk`, `cm` and the note are threaded from the right header, bound together
+/// at [`NoteSeed`](super::delegation::NoteSeed). `epoch_current` is a
+/// left-header field, and $e + 1$ comes from
+/// [`EpochIndex::next`](crate::primitives::EpochIndex::next). The pair, `pk`
+/// and the value are threaded or computed from threaded values, so nothing in
+/// them is free. `rcv` is free; it only blinds `cv`.
 ///
-/// The step compares no bounds against the derivation's range, the
-/// divisibility concluding coverage.
+/// Two sponges run whether or not $e$ and $e + 1$ share a group.
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -83,75 +90,38 @@ impl Step for SpendBind {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = SpendHeader;
-    type Right = NoteNullifiers;
-    /// `(nf_seq, complement_seq, nf_current, nf_next)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier, Nullifier);
+    type Right = NoteSecret;
+    /// `(rcv,)`
+    type Witness<'source> = (value::Trapdoor,);
 
     const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (nf_seq, complement_seq, nf_current, nf_next): Self::Witness<'source>,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (rcv,): Self::Witness<'source>,
         (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
-        (nullifiers_cm, _, nf_commit, _): <Self::Right as Header>::Data,
+        (secret_cm, note, mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(nullifiers_cm) - Fp::from(spendable_cm),
-            "SpendBind: derived range does not match note",
+            Fp::from(secret_cm) - Fp::from(spendable_cm),
+            "SpendBind: secret does not match note",
         )?;
-        enforce_equal_point(
-            Eq::from(nf_seq.commit()),
-            Eq::from(nf_commit),
-            "SpendBind: covering sequence does not match header",
-        )?;
+        if u64::from(note.value) > MAX_MONEY {
+            return Err(ragu_core::Error::InvalidWitness(
+                "SpendBind: note value exceeds maximum".into(),
+            ));
+        }
 
-        // The 2-wide read at the lineage's epoch: the divisibility
-        // `nf_seq = current · next · complement` at a challenge absorbing the
-        // witnessed commitments and both free nullifiers.
-        let z = ctx.derive_challenge(&[
-            nf_seq.commit().into(),
-            complement_seq.commit().into(),
-            {
-                // The mock absorbs only points, so absorb `[nf_current]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * Fp::from(nf_current)
-            },
-            {
-                // The mock absorbs only points, so absorb `[nf_next]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * Fp::from(nf_next)
-            },
-        ])?;
-        let nf_seq_at_z = nf_seq.eval(z);
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-
-        let complement_at_z = complement_seq.eval(z);
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
-
-        // The pair read needs a following epoch; the final epoch has none.
+        // The pair needs a following epoch; the final epoch has none.
         let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
-        let pair_at_z = indexed_multiset::direct_eval(
-            [
-                (spendable_epoch_current.into(), nf_current.into()),
-                (epoch_next.into(), nf_next.into()),
-            ],
-            z,
-        );
-        enforce_zero(
-            nf_seq_at_z - pair_at_z * complement_at_z,
-            "SpendBind: nullifier pair does not match the derivation",
-        )?;
+
+        // TODO: a real circuit needs a low-bit decomposition of each epoch for
+        // its group start and position; mock ragu computes both natively.
+        let nf_current = mk.derive_nullifier(spendable_epoch_current);
+        let nf_next = mk.derive_nullifier(epoch_next);
 
         // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(
@@ -160,6 +130,16 @@ impl Step for SpendBind {
         )?;
         enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
 
-        Ok(((spendable_cm, nf_current, nf_next, anchor), ()))
+        Ok((
+            (
+                spendable_cm,
+                nf_current,
+                nf_next,
+                anchor,
+                note.pk,
+                rcv.commit(note.value),
+            ),
+            (),
+        ))
     }
 }
