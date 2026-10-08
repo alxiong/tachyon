@@ -1,5 +1,6 @@
 """Chapter 4 — Exclusion at scale: quadratic residue filters (scenes 4.1–4.5)."""
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -58,6 +59,42 @@ def counter_anim(holder, digits, pos, aligned=ORIGIN, rate=rush_from):
         k = min(int(rate(a) * (len(digits) - 1) + 0.5), len(digits) - 1)
         m.become(digits[k].copy().move_to(pos, aligned_edge=aligned))
     return UpdateFromAlphaFunc(holder, tick)
+
+
+def word_at(sid, phrase, occ=1):
+    """Start time of the LAST word of the occ-th match of `phrase` (e.g. "are one" -> "one")."""
+    import style as _st
+    seq = _st._seq(sid)
+    target = [_st._norm(x) for x in re.split(r"[\s\-]+", phrase) if _st._norm(x)]
+    hits = 0
+    for i in range(len(seq) - len(target) + 1):
+        if [w for _, w in seq[i:i + len(target)]] == target:
+            hits += 1
+            if hits == occ:
+                return seq[i + len(target) - 1][0]
+    raise ValueError(f"anchor not found in {sid}: {phrase!r}")
+
+
+def word_end(sid, phrase, occ=1):
+    """End time of the last word of `phrase`: where a held pause's silence begins."""
+    import style as _st
+    t = word_at(sid, phrase, occ)
+    for x in _st.WORDS[sid]:
+        if abs(x["s"] - t) < 1e-6:
+            return x["e"]
+    return t
+
+
+def mini_ragu():
+    """Small Ragu glyph showing only its query port (cyan), for 'served by Ragu's query part'."""
+    body = RoundedRectangle(width=1.7, height=0.9, corner_radius=0.12)
+    body.set_fill("#0b0b10", 1.0).set_stroke(MUT, SW, 0.9)
+    name = label("Ragu", size=FS_BODY, color=STAR).move_to(body)
+    port = Dot(body.get_left(), radius=0.09).set_fill(CYAN, 1)
+    q = label("query", size=FS_LABEL, color=CYAN).next_to(body, DOWN, buff=0.12)
+    g = VGroup(body, name, port, q)
+    g.port = port
+    return g
 
 
 def docked_note():
@@ -136,6 +173,14 @@ class Scene41(TimedScene):
                   run_time=0.9)
         self.remove(rdot)
 
+        # served by Ragu's query part (folded into the proof system's claims), not a step circuit
+        self.pad_to(A("query part") - 0.4)
+        rg = mini_ragu().move_to(RIGHT * 5.3 + UP * 1.2)
+        qarr = tarrow(chk.get_right() + RIGHT * 0.15, rg.port.get_center() + LEFT * 0.12, color=CYAN,
+                      width=SW_THIN)
+        self.play(FadeIn(rg, shift=0.2 * LEFT), run_time=0.6)
+        self.play(ShowCreation(qarr), Flash(rg.port.get_center(), color=CYAN, flash_radius=0.3), run_time=0.6)
+
         # degree as high as the PCS allows
         self.pad_to(A("as high") - 0.3)
         deg = mtex('deg e = N', size=FS_BODY, color=CYAN).next_to(chk, DOWN, buff=0.35)
@@ -149,7 +194,7 @@ class Scene41(TimedScene):
 
         # run the numbers
         self.pad_to(A("run the numbers") - 0.2)
-        stage = VGroup(prod, chk, deg, deg_note, roots_lab, once)
+        stage = VGroup(prod, chk, deg, deg_note, roots_lab, once, rg, qarr)
         self.play(FadeOut(stage), E.animate.scale(0.8).move_to(LEFT * 4.6 + UP * 0.9), run_time=0.9)
         card = bullets([
             ("100 TPS, all 2-in-2-out", TXT),
@@ -159,7 +204,7 @@ class Scene41(TimedScene):
         self.play(FadeIn(card[0], shift=0.2 * RIGHT), run_time=0.6)
         self.pad_to(A("two week") - 0.3)
         self.play(FadeIn(card[1], shift=0.2 * RIGHT), run_time=0.6)
-        self.pad_to(A("480") - 0.3)
+        self.pad_to(A("four hundred and eighty") - 0.3)
         N = rich([("$N > 4.8 times 10^8$", CYAN), ("tachygrams", TXT)], size=FS_HEAD)
         N.next_to(card, DOWN, buff=0.45).align_to(card, LEFT)
         self.play(FadeIn(N, scale=1.1), run_time=0.8)
@@ -176,32 +221,42 @@ class Scene41(TimedScene):
         vals = [f'{m_:d}:00' for m_ in range(0, 17)]
         digs = digits_seq([f'"{v}"' for v in vals], FS_HEAD, FLARE)
         clock_txt = digs[0].copy()
-        cpos = dial.get_right() + RIGHT * 1.6
+        cpos = dial.get_right() + RIGHT * 1.6 + UP * 0.35
         clock_txt.move_to(cpos)
-        self.play(FadeIn(dial), FadeIn(hand), FadeIn(clock_txt), run_time=0.5)
-        self.play(Rotate(hand, -TAU * 2.6, about_point=dial.get_center()),
-                  counter_anim(clock_txt, digs, cpos, rate=linear), run_time=2.2)
-        self.pad_to(A("doesn't ship") - 0.3)
+        # the degree counter (the IPA verifier's work) under the stopwatch digits
+        dvals = [f"{m_} times 10^{e_}" for e_ in range(1, 9) for m_ in (1, 2, 5)
+                 if (e_, m_) < (8, 5)] + ["4.8 times 10^8"]
+        ddigs = digits_seq(dvals, FS_BODY, CYAN)
+        deg_lab = mtex('"deg" =', size=FS_BODY, color=TXT)
+        deg_lab.next_to(cpos + DOWN * 0.75, LEFT, buff=0.0).align_to(clock_txt, LEFT)
+        dpos = deg_lab.get_right() + RIGHT * 0.2
+        deg_txt = mtex("0", size=FS_BODY, color=CYAN).move_to(dpos, aligned_edge=LEFT)
+        self.play(FadeIn(dial), FadeIn(hand), FadeIn(clock_txt), FadeIn(deg_lab), FadeIn(deg_txt),
+                  run_time=0.5)
+        # pause beat: the counter spins to 4.8e8 and the stopwatch passes 16:00, in the silence
+        self.pad_to(word_end(SID, "sixteen minutes") - 0.1)
         tint = FullScreenRectangle().set_fill(FLARE, 0.12).set_stroke(width=0)
-        nope = label("doesn't ship", size=FS_HEAD, color=FLARE).next_to(clock_txt, DOWN, buff=0.3)
-        self.play(FadeIn(tint), FadeIn(nope, scale=1.2), run_time=0.5)
+        self.play(Rotate(hand, -TAU * 2.6, about_point=dial.get_center()),
+                  counter_anim(clock_txt, digs, cpos, rate=linear),
+                  counter_anim(deg_txt, ddigs, dpos, aligned=LEFT, rate=linear),
+                  FadeIn(tint, rate_func=squish_rate_func(smooth, 0.55, 1.0)), run_time=1.2)
 
         # the target
-        self.pad_to(A("here's the target") - 0.1)
-        self.play(FadeOut(VGroup(tint, nope, dial, hand, clock_txt, card, N, ipa, q)),
-                  E.animate.fade(0.5), run_time=0.6)
+        self.pad_to(A("the target") - 0.5)
+        self.play(FadeOut(VGroup(tint, dial, hand, clock_txt, deg_lab, deg_txt, card, N, ipa, q)),
+                  E.animate.fade(0.5), run_time=0.5)
         tgt_t = scene_title("The target")
         goal = bullets([
             rich([("non-membership over a", TXT), ("whole epoch", CYAN)], size=FS_BODY),
             rich([("amortized cost", TXT), ("sublinear in N", CYAN)], size=FS_BODY),
             rich([("no huge polynomial", TXT), ("near the query", CYAN)], size=FS_BODY),
         ], mark_color=CYAN, buff=0.4).move_to(RIGHT * 1.0 + UP * 0.6)
-        self.play(Write(tgt_t), run_time=0.6)
+        self.play(Write(tgt_t), run_time=0.5)
         self.pad_to(A("prove non") - 0.1)
         self.play(FadeIn(goal[0], shift=0.2 * RIGHT), run_time=0.6)
         self.pad_to(A("amortized") - 0.1)
         self.play(FadeIn(goal[1], shift=0.2 * RIGHT), run_time=0.6)
-        self.pad_to(A("no huge") - 0.1)
+        self.pad_to(A("any huge") - 0.1)
         self.play(FadeIn(goal[2], shift=0.2 * RIGHT), Indicate(E, color=FLARE), run_time=0.8)
         self.pad_to(scene_T(SID))
 
@@ -241,9 +296,14 @@ class Scene42(TimedScene):
         one = rich([("one opening against", TXT), ("one small bucket", GOLD)], size=FS_BODY)
         one.move_to(DOWN * 2.6)
         self.play(FadeIn(one), run_time=0.7)
+        # pause beat: the query opens its one bucket
+        self.pad_to(word_end(SID, "one small bucket") + 0.02)
+        hit = SurroundingRectangle(target, buff=0.08).set_stroke(GOLD, SW_BOLD)
+        self.play(ShowCreationThenFadeOut(hit), Flash(target.get_center(), color=GOLD, flash_radius=0.7),
+                  target.box.animate(rate_func=there_and_back).set_fill(GOLD, 0.35), run_time=1.0)
 
         # requirements
-        self.pad_to(A("so we need") - 0.2)
+        self.pad_to(A("so we need"))
         self.play(FadeOut(VGroup(one, x, bits)), buckets.animate.scale(0.6).to_edge(LEFT, buff=0.5),
                   run_time=0.8)
         req = bullets(["computed from the element itself", "splits any set evenly",
@@ -255,12 +315,12 @@ class Scene42(TimedScene):
         self.play(FadeIn(req[1], shift=0.2 * RIGHT), run_time=0.5)
         self.pad_to(A("cheap to prove") - 0.2)
         self.play(FadeIn(req[2], shift=0.2 * RIGHT), run_time=0.5)
-        self.pad_to(A("number theory") - 0.1)
-        nt = label("number theory has exactly that", size=FS_BODY, color=STAR).next_to(req, DOWN, buff=0.5)
+        self.pad_to(A("quadratic residues") - 0.2)
+        nt = rich([("exactly that:", TXT), ("quadratic residues", CYAN)], size=FS_BODY).next_to(req, DOWN, buff=0.5)
         self.play(FadeIn(nt, shift=0.1 * UP), run_time=0.7)
 
         # the F_13 clock
-        self.pad_to(A("take a prime") - 0.3)
+        self.pad_to(A("in a prime") - 0.1)
         self.play(FadeOut(VGroup(buckets, req, nt)), run_time=0.5)
         clock = F13Clock(radius=1.95, center=LEFT * 3.4 + DOWN * 0.15, show_zero=True)
         ftitle = mtex("FF_13", size=FS_HEAD, color=STAR).move_to(clock.c + RIGHT * 2.9 + UP * 1.9)
@@ -268,24 +328,25 @@ class Scene42(TimedScene):
         self.pad_to(A("set zero aside") - 0.1)
         self.play(clock.zero.animate.fade(0.8).shift(DOWN * 0.1), run_time=0.6)
         cols_ = clock.qr_colors(0)
-        self.pad_to(A("squares the quadratic|quadratic residues") - 0.2)
-        self.play(*[d.animate.set_fill(c, 1) for d, c in cols_ if c == CYAN], run_time=0.8)
+        self.pad_to(A("are squares") - 0.1)
         qr_l = label("squares: quadratic residues", size=FS_LABEL, color=CYAN)
         nqr_l = label("non-squares", size=FS_LABEL, color=AMBER)
         legend = VGroup(qr_l, nqr_l).arrange(DOWN, aligned_edge=LEFT, buff=0.2)
         legend.move_to([clock.c[0], -3.0, 0])
         self.play(FadeIn(qr_l), run_time=0.4)
-        self.pad_to(A("half are not") - 0.1)
-        self.play(*[d.animate.set_fill(c, 1) for d, c in cols_ if c == AMBER], FadeIn(nqr_l), run_time=0.8)
-        # list the squares as spoken
-        for k, ph in zip((1, 3, 4, 9, 10, 12), ("are 1", "3", "4", "9", "10", "12")):
-            try:
-                t = A(ph) if ph != "are 1" else A("are 1")
-            except ValueError:
-                continue
-            self.pad_to(t - 0.05)
-            self.play(Indicate(clock.dot(k), color=CYAN, scale_factor=1.6),
+        self.pad_to(A("half of them are not") - 0.1)
+        self.play(FadeIn(nqr_l), run_time=0.5)
+        # list the squares as spoken: each dot turns cyan on its word
+        for k, ph in zip((1, 3, 4, 9, 10, 12),
+                         ("squares are one", "three", "four", "nine", "ten", "twelve")):
+            self.pad_to(word_at(SID, ph) - 0.05)
+            self.play(clock.dot(k).animate(rate_func=smooth).set_fill(CYAN, 1),
                       Indicate(clock.num(k), color=CYAN, scale_factor=1.3), run_time=0.35)
+        # pause beat: the rest of the ring turns amber, residues pulse
+        self.pad_to(word_end(SID, "and twelve") + 0.02)
+        self.play(*[d.animate.set_fill(c, 1) for d, c in cols_ if c == AMBER],
+                  *[d.animate(rate_func=there_and_back).scale(1.35) for d, c in cols_ if c == CYAN],
+                  run_time=0.85)
 
         # one constraint for QR
         self.pad_to(A("proving that x is a square") - 0.2)
@@ -293,7 +354,7 @@ class Scene42(TimedScene):
         sq = rich([("$x in \"QR\":$", CYAN), ("hand the circuit", TXT), ("$y$", STAR)], size=FS_BODY)
         sq.move_to([right_x, 2.2, 0])
         self.play(FadeIn(sq), run_time=0.7)
-        self.pad_to(A("check that y") - 0.1)
+        self.pad_to(A("checks that y") - 0.1)
         eq1 = mtex("y^2 = x", size=FS_HEAD, color=CYAN).next_to(sq, DOWN, buff=0.3)
         c1 = label("1 constraint", size=FS_LABEL, color=MUT).next_to(eq1, RIGHT, buff=0.4)
         self.play(Write(eq1), FadeIn(c1), run_time=0.8)
@@ -303,13 +364,13 @@ class Scene42(TimedScene):
         nsq = rich([("$x in.not \"QR\":$", AMBER), ("a classic flip", TXT)], size=FS_BODY)
         nsq.next_to(eq1, DOWN, buff=0.55).align_to(sq, LEFT)
         self.play(FadeIn(nsq), run_time=0.6)
+        times2 = mtex("x |-> 2x", size=FS_HEAD, color=STAR).move_to(clock.c)
+        self.pad_to(A("multiplying by") - 0.2)
+        self.play(FadeIn(times2), clock.zero.animate.set_opacity(0), run_time=0.5)
         self.pad_to(A("swaps the two") - 0.3)
         sw = mtex('"non-square" times x : "QR" <-> "NQR"', size=FS_LABEL, color=TXT)
         sw.next_to(nsq, DOWN, buff=0.3).align_to(sq, LEFT)
         self.play(FadeIn(sw), run_time=0.6)
-        self.pad_to(A("multiply everything") - 0.2)
-        times2 = mtex("x |-> 2x", size=FS_HEAD, color=STAR).move_to(clock.c)
-        self.play(FadeIn(times2), clock.zero.animate.set_opacity(0), run_time=0.4)
         # every dot's color travels to position 2k
         movers = VGroup()
         anims = []
@@ -319,12 +380,11 @@ class Scene42(TimedScene):
             movers.add(m_)
             tgt = clock.dot((2 * k) % 13).get_center()
             anims.append(m_.animate(path_arc=-PI / 3).move_to(tgt))
+        # pause beat: multiplying by two swaps the colors (in the silence after "classes")
+        self.pad_to(word_end(SID, "two classes") + 0.02)
         self.add(movers)
-        self.play(*anims, run_time=1.6)
-        self.pad_to(A("trade places") - 0.1)
-        self.play(*[Flash(m_.get_center(), color=STAR, flash_radius=0.25, line_length=0.12)
-                    for m_ in movers[:6]], run_time=0.6)
-        self.pad_to(A("fix a public") - 0.2)
+        self.play(*anims, run_time=1.1)
+        self.pad_to(A("fixed public") - 0.1)
         # back to the canonical coloring
         self.play(FadeOut(movers), FadeOut(times2), run_time=0.6)
         eq2 = mtex("y^2 = c dot x", size=FS_HEAD, color=AMBER).next_to(sw, DOWN, buff=0.35)
@@ -333,7 +393,7 @@ class Scene42(TimedScene):
                      size=FS_LABEL).next_to(eq2, DOWN, buff=0.2).align_to(sq, LEFT)
         self.pad_to(A("y squared equals c") - 0.2)
         self.play(Write(eq2), FadeIn(cnote), run_time=0.9)
-        self.pad_to(A("again one constraint") - 0.1)
+        self.pad_to(A("again that's one constraint") - 0.1)
         c2 = label("1 constraint", size=FS_LABEL, color=MUT).next_to(eq2, RIGHT, buff=0.4)
         self.play(FadeIn(c2), run_time=0.4)
 
@@ -346,18 +406,20 @@ class Scene42(TimedScene):
         R = 1
         cols1 = clock.qr_colors(R)
         Rlab = mtex("R = 1", size=FS_BODY, color=STAR).move_to(clock.c)
-        self.play(*[d.animate.set_fill(c if c != STAR else CYAN, 1) for d, c in cols1], FadeIn(Rlab),
-                  run_time=1.2)
-        self.pad_to(A("qr discriminant|discriminant") - 0.1)
+        self.pad_to(A("qr discriminant") - 0.1)
         disc = label("a QR discriminant", size=FS_BODY, color=CYAN).next_to(shift_l, DOWN, buff=0.3)
         self.play(FadeIn(disc, shift=0.1 * UP), run_time=0.6)
+        # pause beat: sliding R recolors the ring
+        self.pad_to(word_end(SID, "qr discriminant") + 0.02)
+        self.play(*[d.animate.set_fill(c if c != STAR else CYAN, 1) for d, c in cols1],
+                  FadeIn(Rlab, shift=0.15 * RIGHT), run_time=1.0)
         self.pad_to(A("roughly in half") - 0.3)
         half = label("cuts any fixed set roughly in half", size=FS_LABEL, color=TXT)
         half.next_to(disc, DOWN, buff=0.25)
         self.play(FadeIn(half), run_time=0.6)
 
         # k-bit profile for x = 3
-        self.pad_to(A("use k") - 0.2)
+        self.pad_to(A("with k") - 0.2)
         prof_rows = VGroup()
         for j, Rj in enumerate((0, 1, 2)):
             v = (3 + Rj) % 13
@@ -406,8 +468,10 @@ class Scene42(TimedScene):
         bad = mtex('y^2 = c dot 0 => y = 0', size=FS_BODY, color=FLARE).next_to(wit, DOWN, buff=0.3)
         self.play(FadeIn(bad), run_time=0.6)
         self.pad_to(A("square root of zero") + 0.2)
-        self.play(ShowCreation(Line(bad.get_left(), bad.get_right(), stroke_color=FLARE, stroke_width=SW)),
-                  run_time=0.5)
+        strike = VMobject().set_points_as_corners([bad.get_left() + LEFT * 0.08,
+                                                   bad.get_right() + RIGHT * 0.08])
+        strike.set_stroke(FLARE, SW)  # polyline, not a Line: an intended strike-through
+        self.play(ShowCreation(strike), run_time=0.5)
         self.pad_to(scene_T(SID))
 
 
@@ -484,16 +548,27 @@ class Scene43(TimedScene):
         eh = env("h", color=GOLD, w=1.0, h=0.75).next_to(eg, RIGHT, buff=0.35)
         self.play(FadeIn(eg, shift=0.2 * DOWN), FadeIn(eh, shift=0.2 * DOWN), run_time=0.7)
         self.pad_to(A("random point") - 0.2)
-        rp = fl.n2p(6.5)
+        rp = fl.n2p(5)
         probe = Line(rp + UP * 2.4, rp, stroke_color=STAR, stroke_width=SW)
-        rl = mtex("r", size=FS_BODY, color=STAR).next_to(probe, UP, buff=0.1)
+        rl = mtex("r = 5", size=FS_BODY, color=STAR).next_to(probe.get_top(), RIGHT, buff=0.12)
         self.play(ShowCreation(probe), FadeIn(rl), run_time=0.6)
         self.pad_to(A("and checks") - 0.2)
-        chk = mtex("g(r)^2 - r = f(r) dot h(r)", size=FS_HEAD, color=STAR).move_to([rx + 1.4, -1.35, 0])
+        lhs = mtex("g(r)^2 - r", size=FS_HEAD, color=STAR)
+        eqs = mtex("=", size=FS_HEAD, color=STAR)
+        rhs = mtex("f(r) dot h(r)", size=FS_HEAD, color=STAR)
+        chk = VGroup(lhs, eqs, rhs).arrange(RIGHT, buff=0.2).move_to([rx + 1.0, -1.35, 0])
         self.play(Write(chk), run_time=1.2)
+        # pause beat: both sides print the same element (F_13, r = 5: g(5) = 12, f(5) = 5, h(5) = 7)
+        lv = mtex("12^2 - 5 = 9", size=FS_LABEL, color=GOLD).next_to(lhs, DOWN, buff=0.22)
+        rv = mtex("5 dot 7 = 9", size=FS_LABEL, color=GOLD).next_to(rhs, DOWN, buff=0.22)
+        rv.align_to(lv, DOWN)  # same baseline
+        self.pad_to(word_end(SID, "h of r") + 0.02)
+        self.play(FadeIn(lv, shift=0.15 * DOWN), FadeIn(rv, shift=0.15 * DOWN), run_time=0.6)
+        self.play(Flash(lv[-1].get_center(), color=GOLD, flash_radius=0.3),
+                  Flash(rv[-1].get_center(), color=GOLD, flash_radius=0.3), run_time=0.5)
         self.pad_to(A("one identity") - 0.2)
         ok = checkmark(0.4, GOLD).next_to(chk, RIGHT, buff=0.25)
-        allsq = label("every root of f is a square", size=FS_LABEL, color=CYAN).next_to(chk, DOWN, buff=0.25)
+        allsq = label("every root of f is a square", size=FS_LABEL, color=CYAN).next_to(VGroup(lv, rv), DOWN, buff=0.2)
         self.play(ShowCreation(ok), FadeIn(allsq), run_time=0.8)
         self.pad_to(A("non residue version") - 0.2)
         nv = mtex("g(r)^2 - c(r + R) = f(r) dot h(r)", size=FS_LABEL, color=AMBER)
@@ -506,7 +581,7 @@ class Scene43(TimedScene):
         # split a bucket under R = 1
         self.pad_to(A("split a bucket") - 0.6)
         old = VGroup(fl, roots, f_eq, sqs, dist, dots, stems, tags, curve, g_lab, yy, v1, hdef, wl,
-                     eg, eh, probe, rl, chk, ok, allsq, nv, rep)
+                     eg, eh, probe, rl, chk, lv, rv, ok, allsq, nv, rep)
         self.play(FadeOut(old), title.animate.become(scene_title("Split one bucket: four checks")),
                   run_time=0.6)
         members = (2, 4, 5, 7, 10, 12)
@@ -525,19 +600,26 @@ class Scene43(TimedScene):
         q1l = mtex("q_1", size=FS_BODY, color=CYAN).next_to(q1box, DOWN, buff=0.15)
         q0n = label("non-residues", size=FS_LABEL, color=AMBER).next_to(q0l, DOWN, buff=0.1)
         q1n = label("residues", size=FS_LABEL, color=CYAN).next_to(q1l, DOWN, buff=0.1)
-        self.pad_to(A("split f") - 0.2)
+        self.pad_to(A("two pieces") - 0.2)
         self.play(FadeIn(q0box), FadeIn(q1box), run_time=0.6)
         is_q = {x: ((x + R) % 13 == 0 or (x + R) % 13 in QR13) for x in members}
         n0 = [c for x, c in zip(members, chips) if not is_q[x]]
         n1 = [c for x, c in zip(members, chips) if is_q[x]]
         tgt0 = VGroup(*[c.copy() for c in n0]).arrange(RIGHT, buff=0.15).move_to(q0box)
         tgt1 = VGroup(*[c.copy() for c in n1]).arrange(RIGHT, buff=0.15).move_to(q1box)
-        self.play(*[c.animate.move_to(t).set_color(AMBER) for c, t in zip(n0, tgt0)],
-                  *[c.animate.move_to(t).set_color(CYAN) for c, t in zip(n1, tgt1)], run_time=1.2)
-        self.pad_to(A("holding the non") - 0.3)
+        self.pad_to(A("q zero") - 0.2)
         self.play(FadeIn(q0l), FadeIn(q0n), run_time=0.5)
-        self.pad_to(A("q1 holding|holding the residues") - 0.2)
+        self.pad_to(A("q one") - 0.2)
         self.play(FadeIn(q1l), FadeIn(q1n), run_time=0.5)
+        # pause beat: the discriminant blade cleaves the bucket into amber and cyan
+        self.pad_to(word_end(SID, "holds the residues") + 0.02)
+        blade = Line(fbox.get_left() + LEFT * 0.35, fbox.get_right() + RIGHT * 0.35)
+        blade.set_stroke(STAR, SW_BOLD, 1.0)
+        self.play(LaggedStart(
+            ShowCreationThenFadeOut(blade),
+            AnimationGroup(*[c.animate.move_to(t).set_color(AMBER) for c, t in zip(n0, tgt0)],
+                           *[c.animate.move_to(t).set_color(CYAN) for c, t in zip(n1, tgt1)]),
+            lag_ratio=0.3), run_time=1.05)
 
         # four lamps
         L = VGroup(
@@ -554,10 +636,10 @@ class Scene43(TimedScene):
         L.arrange(DOWN, aligned_edge=LEFT, buff=0.6).move_to(RIGHT * 2.9 + DOWN * 0.2)
         for t_, l_ in zip(tags_, L):
             t_.next_to(l_.text, UP, buff=0.08).align_to(l_.text, LEFT)
-        self.pad_to(A("four checks") - 0.2)
+        self.pad_to(A("four checks") - 0.05)
         self.play(LaggedStart(*[FadeIn(l_.circle) for l_ in L], lag_ratio=0.15),
                   LaggedStart(*[FadeIn(l_.num) for l_ in L], lag_ratio=0.15), run_time=0.8)
-        for i, ph in enumerate(("first decomposition", "second", "third", "and fourth")):
+        for i, ph in enumerate(("first is decomposition", "second", "third", "fourth")):
             self.pad_to(A(ph) - 0.2)
             self.play(FadeIn(L[i].text, shift=0.1 * RIGHT), FadeIn(tags_[i]), lit(L[i]), run_time=0.8)
         # why lamp 4
@@ -762,8 +844,16 @@ class Scene44(TimedScene):
         cap = swap_cap(rich([("$q_M = q_L dot q_R$", STAR), ("the union check again: no new trust", MUT)],
                             size=FS_LABEL), cap)
 
+        def wave(lines, color=GOLD):
+            return AnimationGroup(*[ShowPassingFlash(l.copy().set_stroke(color, 5, 1.0), time_width=0.6)
+                                    for l in lines])
+        all_mrg = [e for g_ in e_mrg.values() for e in g_]
+        # pause beat: one routing round replayed: split, then merge
+        self.pad_to(word_end(SID, "nothing new to trust") + 0.02)
+        self.play(Succession(wave(e_dec), wave(all_mrg)), run_time=1.0)
+
         # ranges underneath: decomposition keeps, merge joins
-        self.pad_to(A("track the anchor") - 0.2)
+        self.pad_to(A("underneath all") - 0.1)
         cap = swap_cap(label("watch the anchor-range bars", size=FS_LABEL, color=GOLD), cap)
         self.pad_to(A("decomposition keeps") - 0.2)
         self.play(LaggedStart(*[AnimationGroup(Indicate(roots[i][-1], color=GOLD, scale_factor=1.6),
@@ -801,20 +891,20 @@ class Scene44(TimedScene):
         self.pad_to(A("in parallel") - 0.2)
         cap = swap_cap(label("parallel  ·  streaming  ·  while the epoch is live", size=FS_LABEL,
                              color=CYAN), cap)
-
-        def wave(lines):
-            return AnimationGroup(*[ShowPassingFlash(l.copy().set_stroke(GOLD, 5, 1.0), time_width=0.6)
-                                    for l in lines])
-        all_mrg = [e for g_ in e_mrg.values() for e in g_]
-        self.play(wave(e_dec), run_time=0.9)
-        self.play(wave(all_mrg), run_time=0.9)
-        self.play(wave(e_r2), run_time=0.9)
+        self.play(wave(e_dec), run_time=0.8)
+        self.play(wave(all_mrg), run_time=0.8)
+        self.play(wave(e_r2), run_time=0.8)
+        # pause beat: zoom out over the braided network, every round flowing at once
+        self.pad_to(word_end(SID, "still live") + 0.02)
+        self.play(self.frame.animate.scale(1.18), wave(e_dec, CYAN), wave(all_mrg, CYAN), wave(e_r2, CYAN),
+                  run_time=1.1)
 
         # stragglers: profile 11 is really two partial buckets -> partial round R3
         self.pad_to(A("lag behind") - 0.2)
         up = (ROW[0] - ROW[2]) * UP
         keep = VGroup(merged, e_r2, finals, r2, *e_mrg.values())
-        self.play(FadeOut(VGroup(roots, kids, e_dec, r1)), FadeOut(cap, shift=0.1 * DOWN), run_time=0.7)
+        self.play(FadeOut(VGroup(roots, kids, e_dec, r1)), FadeOut(cap, shift=0.1 * DOWN),
+                  self.frame.animate.scale(1 / 1.18), run_time=0.7)
         self.play(keep.animate.shift(up), FadeOut(VGroup(*e_mrg.values())), run_time=0.9)
         p11a = rbucket(1.05, 0.72, CYAN, "11", (0.0, 0.75))
         p11b = rbucket(1.05, 0.72, CYAN, "11", (0.75, 1.0))
@@ -859,7 +949,7 @@ class Scene44(TimedScene):
             np.array([(f110.get_x() + f111.get_x()) / 2 - 1.6, fy1, 0]), DOWN, buff=0.12)
         self.play(ShowCreation(frontier), FadeIn(da), FadeIn(db), run_time=1.0)
         # prefix partition of the field
-        self.pad_to(A("partitioning the field") - 0.3)
+        self.pad_to(A("partition the field") - 0.3)
         BARW, bar_y = 9.0, ROW[3] - 0.15
         parts = VGroup()
         for x0, x1, c, bb in [(0.0, 0.25, AMBER, "00"), (0.25, 0.5, CYAN, "01"), (0.5, 0.75, AMBER, "10"),
@@ -875,6 +965,15 @@ class Scene44(TimedScene):
         finished = [finals[0], finals[1], finals[2], f110, f111]
         self.play(*[Indicate(f[-1], color=GOLD, scale_factor=1.5) for f in finished],
                   Flash(g6[1].get_center(), color=STAR), Flash(g7[1].get_center(), color=STAR), run_time=0.9)
+        # pause beat: finished buckets click onto the finish rail, sntl_6 -> sntl_7
+        self.pad_to(word_end(SID, "sentinel to sentinel") + 0.02)
+        rail_lines = VGroup(*[Line([XL + 0.1, YS - 0.2 - 0.075 * i, 0], [XR - 0.1, YS - 0.2 - 0.075 * i, 0],
+                                   stroke_width=4.0, stroke_color=f[-1].get_stroke_color())
+                              for i, f in enumerate(finished)])
+        self.play(LaggedStart(*[TransformFromCopy(f[-1], ln) for f, ln in zip(finished, rail_lines)],
+                              lag_ratio=0.18), run_time=0.75)
+        self.play(Flash(g6[1].get_center(), color=GOLD, flash_radius=0.4),
+                  Flash(g7[1].get_center(), color=GOLD, flash_radius=0.4), run_time=0.4)
         self.pad_to(A("seal step") - 0.2)
         seals = VGroup(*[checkmark(0.26, GOLD).move_to(f[0].get_corner(UR) + 0.02 * DOWN) for f in finished])
         sl = label("sealed: both sentinels checked", size=FS_LABEL, color=GOLD)
@@ -884,7 +983,7 @@ class Scene44(TimedScene):
         # in the proof tree: split + two descents
         self.pad_to(A("in the proof tree") - 0.3)
         self.play(FadeOut(VGroup(merged, e_r2, finals[:3], p11a, p11b, f110, f111, e_r3, r2, r3, frontier,
-                                 da, db, parts, pf, seals, cap, pr, brs, beads)), run_time=0.6)
+                                 da, db, parts, pf, seals, cap, pr, brs, beads, rail_lines)), run_time=0.6)
         P = bucket(1.6, 0.7, color=STAR, tex="p").move_to(LEFT * 4.6 + UP * 1.2)
         split = step_pill("split", color=CYAN).next_to(P, RIGHT, buff=0.8)
         sides = VGroup(bucket(1.2, 0.6, AMBER, tex="q_0"), bucket(1.2, 0.6, CYAN, tex="q_1")).arrange(DOWN, buff=0.3)
@@ -1011,8 +1110,8 @@ class Scene45(TimedScene):
         self.add(rglow, root)
         self.pad_to(A("evidence tree") - 0.2)
         rl = label("one root", size=FS_LABEL, color=STAR).next_to(root, RIGHT, buff=0.3)
-        self.play(FadeIn(rl), Flash(root.get_center(), color=STAR, flash_radius=0.45), run_time=0.7)
-        self.pad_to(A("arity 4") - 0.4)
+        self.play(FadeIn(rl), Flash(root.get_center(), color=STAR, flash_radius=0.3, line_length=0.12), run_time=0.7)
+        self.pad_to(A("arity four") - 0.4)
         ar = rich([("Poseidon Merkle tree,", TXT), ("arity 4", STAR), ("= sponge rate", MUT)], size=FS_LABEL)
         ar.next_to(root, LEFT, buff=0.45)
         self.play(FadeIn(ar), *[Indicate(m_, color=STAR, scale_factor=1.6) for m_ in mids], run_time=0.9)
@@ -1031,7 +1130,17 @@ class Scene45(TimedScene):
             self.pad_to(A(ph) - 0.15)
             self.play(FadeIn(payload[idx], shift=0.1 * UP), run_time=0.45)
         self.pad_to(A("single root") - 0.2)
-        self.play(Flash(root.get_center(), color=STAR, flash_radius=0.5), run_time=0.6)
+        self.play(Flash(root.get_center(), color=STAR, flash_radius=0.3, line_length=0.12), run_time=0.6)
+        # pause beat: buckets fold up the rate-4 tree, the root glows: epoch 6's certificate
+        self.pad_to(word_end(SID, "single root") + 0.02)
+        rl6 = label("one root for epoch 6", size=FS_LABEL, color=STAR).move_to(rl, aligned_edge=LEFT)
+        up1 = AnimationGroup(*[ShowPassingFlash(e.copy().set_stroke(STAR, 4, 1.0), time_width=0.7) for e in e1])
+        up2 = AnimationGroup(*[ShowPassingFlash(e.copy().set_stroke(STAR, 5, 1.0), time_width=0.7) for e in e2])
+        self.play(Succession(up1, up2, AnimationGroup(rglow.animate(rate_func=there_and_back).scale(1.8),
+                                                       Flash(root.get_center(), color=STAR, flash_radius=0.35,
+                                                             line_length=0.12))),
+                  AnimationGroup(FadeOut(rl), FadeIn(rl6), lag_ratio=0.85), run_time=1.0)
+        rl = rl6
         # a single leaf is a valid tree
         self.pad_to(A("doesn't have to") - 0.2)
         mini_l = bucket(0.52, 0.42, color=CYAN, fill=0.15)
@@ -1046,10 +1155,10 @@ class Scene45(TimedScene):
         self.play(Indicate(mini_l, color=GOLD, scale_factor=1.3), run_time=0.7)
 
         # queries
-        self.pad_to(A("queries go") - 0.3)
+        self.pad_to(A("for membership") - 0.9)
         self.play(FadeOut(VGroup(payload, conn, mini, ml, ring, ar)), run_time=0.6)
         path = VGroup(e1[5].copy(), e2[1].copy()).set_stroke(GOLD, SW_BOLD)
-        self.pad_to(A("for membership") - 0.1)
+        self.pad_to(A("for membership") - 0.15)
         mem = rich([("membership:", GOLD), ("authenticate a leaf", TXT)], size=FS_BODY).move_to(LEFT * 2.6 + DOWN * 1.7)
         self.play(FadeIn(mem), ShowCreation(path), run_time=0.9)
         self.pad_to(A("check that the value") - 0.2)
@@ -1070,29 +1179,33 @@ class Scene45(TimedScene):
                               for e in (5, 6, 7, 8)])
         self.play(FadeOut(VGroup(mem, z, np_, dv)), FadeIn(rail),
                   LaggedStart(*[FadeIn(t_, scale=0.5) for t_ in tree_icons], lag_ratio=0.15), run_time=0.8)
+        self.pad_to(A("found in epoch five") - 0.2)
         cm = tg_chip('"cm"', color=GOLD).move_to(rail.center_of(5, dy=1.15))
         self.play(FadeIn(cm, shift=0.2 * DOWN), Flash(tree_icons[0].get_center(), color=GOLD), run_time=0.7)
 
         # non-membership
         self.pad_to(A("for non") - 0.2)
+        # right of the epoch-8 tree icon, between the leaves and the rail (clear of every rail glyph)
         nm = VGroup(
-            rich([("non-membership:", CYAN), ("re-derive the discriminants from", TXT), ("$R_0$", GOLD)], size=FS_BODY),
-            rich([("check the bits of", TXT), ('$"nf"_6$', GOLD), ("select this leaf", TXT)], size=FS_BODY),
+            label("non-membership:", size=FS_LABEL, color=CYAN),
+            rich([("re-derive discriminants from", TXT), ("$R_0$", GOLD)], size=FS_LABEL),
+            rich([("bits of", TXT), ('$"nf"_6$', GOLD), ("select this leaf", TXT)], size=FS_LABEL),
             mtex('q_b ("nf"_6) != 0', size=FS_BODY, color=CYAN),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.22).move_to(RIGHT * 2.9 + DOWN * 1.9)
-        self.play(FadeIn(nm[0]), run_time=0.7)
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.14)
+        nm.move_to([2.45, -1.12, 0], aligned_edge=UL)
+        self.play(FadeIn(nm[0]), FadeIn(nm[1]), run_time=0.7)
         self.pad_to(A("bits select") - 0.3)
-        self.play(FadeIn(nm[1]), run_time=0.5)
-        self.pad_to(A("non zero there") - 0.3)
         self.play(FadeIn(nm[2]), run_time=0.5)
-        self.pad_to(A("nullifier for epoch 6|nullifier for epic 6") - 0.2)
+        self.pad_to(A("nonzero there") - 0.3)
+        self.play(FadeIn(nm[3]), run_time=0.5)
+        self.pad_to(A("nullifier for epoch six") - 0.2)
         nf = tg_chip('"nf"_6', color=GOLD).move_to(rail.center_of(6, dy=1.15))
         ck = checkmark(0.3, GOLD).next_to(nf, RIGHT, buff=0.15)
         self.play(FadeIn(nf, shift=0.2 * DOWN), run_time=0.5)
         self.play(ShowCreation(ck), run_time=0.4)
 
         # compare with the wall
-        self.pad_to(A("compare that") - 0.2)
+        self.pad_to(A("so the sixteen") - 0.8)
         self.play(FadeOut(VGroup(leaves, e1, e2, mids, path, rl, nm)), FadeOut(Group(root, rglow)), run_time=0.6)
         wall = VGroup(mtex('e(X) : "deg" approx 4.8 times 10^8', size=FS_BODY, color=FLARE),
                       label("more than 16 minutes to verify", size=FS_LABEL, color=FLARE)).arrange(DOWN, buff=0.2)
@@ -1101,21 +1214,17 @@ class Scene45(TimedScene):
         wb = boxed(wall, color=FLARE, pad=0.3).move_to(LEFT * 3.3 + UP * 0.9)
         nb_ = boxed(newc, color=GOLD, pad=0.3).move_to(RIGHT * 3.2 + UP * 0.9)
         arr = tarrow(wb, nb_, color=GOLD, width=SW)
+        self.pad_to(A("sixteen minute") - 0.2)
         self.play(FadeIn(wb), run_time=0.6)
-        self.pad_to(A("became") - 0.2)
+        self.pad_to(A("turned into") - 0.2)
         self.play(GrowFromPoint(arr, wb.get_right()), FadeIn(nb_, shift=0.2 * LEFT), run_time=0.9)
         self.pad_to(A("routing ran once") - 0.3)
         once = label("routing ran once, in flight; building the tree is the only post-epoch work",
                      size=FS_LABEL, color=MUT).move_to(DOWN * 0.7)
         self.play(FadeIn(once), run_time=0.7)
 
-        # shared by every wallet
-        self.pad_to(A("one evidence tree per") - 0.2)
-        wallets = VGroup(*[proof_token(0.13) for _ in range(3)]).arrange(RIGHT, buff=2.4).move_to(DOWN * 1.65)
-        self.play(FadeOut(cm), FadeOut(nf), FadeOut(ck), FadeIn(wallets), run_time=0.6)
-        self.pad_to(A("shared by every") - 0.3)
-        beams = VGroup(*[Line(w.get_center(), t_.get_center(), stroke_color=STAR, stroke_width=SW_THIN,
-                              stroke_opacity=0.6) for w in wallets for t_ in tree_icons])
-        self.play(ShowCreation(beams, lag_ratio=0.05),
-                  *[Flash(t_.get_center(), color=STAR, flash_radius=0.3) for t_ in tree_icons], run_time=1.2)
+        # building the tree is the only post-close work: the roots on the rail glow
+        self.pad_to(A("building the tree") - 0.1)
+        self.play(*[Flash(t_.get_center(), color=STAR, flash_radius=0.3) for t_ in tree_icons],
+                  *[t_.animate(rate_func=there_and_back).scale(1.6) for t_ in tree_icons], run_time=1.0)
         self.pad_to(scene_T(SID))

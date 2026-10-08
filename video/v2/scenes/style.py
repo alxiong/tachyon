@@ -143,9 +143,13 @@ def clear_shimmer(cells):
 import json as _json
 import re as _re
 
-_WORDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "audio", "words.json")
+# Narration take the scenes sync to: audio/sts (Brian with Sean's delivery, word times
+# from generate_audio.py). NARRATION_AUDIO=audio selects the v1 take.
+AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                         os.environ.get("NARRATION_AUDIO", "audio/sts"))
+_WORDS_PATH = os.path.join(AUDIO_DIR, "words.json")
 try:
-    WORDS = _json.load(open(_WORDS_PATH))  # {sid: [{"w","s","e"}, ...]} from v2/align.py
+    WORDS = _json.load(open(_WORDS_PATH))  # {sid: [{"w","s","e"}, ...]}
 except FileNotFoundError:
     WORDS = {}
 
@@ -185,8 +189,7 @@ def anchor(sid: str, phrase: str, occ: int = 1) -> float:
 def scene_T(sid: str, tail: float = 0.8) -> float:
     """Target scene duration: final audio length + a short visual tail."""
     import subprocess as _sp
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "audio", "final", f"scene-{sid}.mp3")
+    path = os.path.join(AUDIO_DIR, "final", f"scene-{sid}.mp3")
     out = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
                    "-of", "csv=p=0", path], capture_output=True, text=True).stdout
     return float(out.strip()) + tail

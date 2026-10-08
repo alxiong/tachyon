@@ -57,6 +57,44 @@
 >    - **An occasional tag question** ("…, right?") when a point should feel obvious.
 >    - **Not carried over** from the talk: "um", "uh", false starts, and repeated words.
 >      Those are live-speech artifacts, and a cloned voice would learn them.
+> 5. Say it like a protocol designer (from Alex's pass over chapters 1, 2 and 6). Rule 4
+>    sets the rhythm, and this rule sets what each clause says:
+>    - **No narrator bridges.** Drop lines whose only job is a handoff ("With an owner in
+>      hand, let's look at…", "So now the note exists. Where does its commitment go?",
+>      "Now that we have all the pieces, let's look at…") and aphorisms that stand in for
+>      a point ("Before the note can exist, it needs an owner."). A scene may open by
+>      saying plainly what it's about to do and why ("let's see some concrete numbers to
+>      put the amortized cost of aggregation into perspective"), and it ends on its last
+>      fact.
+>    - **The mechanism, not a metaphor for it.** The picture can show a blade, but the
+>      voice says what actually happens: "separate the concerns of spend authorization
+>      and note transmission", not "cuts along that line".
+>    - **Define every symbol and term when it first appears**: "r-k, which is a-k plus
+>      alpha times G, where alpha is the randomizer". Give each key or value its job in a
+>      "which" clause: "the nullifier key, n-k, which derives nullifiers".
+>    - **Use the protocol's own name for a thing, at full length**: "the StampLift step",
+>      "anchor lifting", "binary merging", "the spending of notes", "spend actions and
+>      output actions", "a computationally heavy proving algorithm" (not "a prover").
+>      Category names from the spec go in *italics* where they're introduced
+>      (*effecting data*, *authorization data*).
+>    - **Exact qualifiers and the right actor.** "Inside the same spending epoch", not
+>      "inside one epoch"; "in parallel", not "at once"; "a user can update a stamp", not
+>      "a relayer"; "incentive", not "reason". Drop a detail that isn't always true
+>      ("proven by its own wallet").
+>    - **Follow a claim through to its payoff or scope**: "room for more transactions,
+>      thus more fees", "every incoming note for the same owner", "can evolve in parallel
+>      without upgrading the shielded pool".
+>    - **Name the threat behind a security claim**: who the attacker is and what they
+>      have ("every sender, who potentially has access to a quantum computer").
+>    - **Put numbers in their real setting**: which upgrade ("after the NU7 upgrade"),
+>      what hardware ("a consumer laptop"), and what reserved time is spent on.
+>    - **Say how we build it**: "We instantiate this commitment with…" rather than
+>      "Because it's built from…".
+>    - **Protocol vocabulary over casual synonyms**: "ledger" not "chain", "opaque bytes",
+>      "parsing or interpreting", "auditing".
+>    - **Stress goes in *italics***, on the word that carries a contrast ("each covered
+>      transaction *drops* its own stamp, and *points at*…", "succinct *and*
+>      quantum-recoverable"). It's a cue for a human reader; the TTS pipeline strips it.
 
 ---
 
@@ -66,7 +104,7 @@
 
 Every shielded pool in Zcash has two sets, and they grow at roughly the same rate, which is one entry for every note that's created, and then one for every note that's spent. ⟨pause: both sets grow side by side⟩
 
-On the left are note commitments, and these live in an append-only Merkle tree. To keep appending, validators only really need the tree's frontier, so, like, one hash per level, but everything else can actually be pruned today. And the long-term cost of this tree is logarithmic. ⟨pause: the tree prunes down to its frontier⟩
+On the left are note commitments, and these live in an append-only Merkle tree. To keep appending, validators only really need the tree's frontier, so, like, one hash per level, but everything else can actually be pruned today. So the state that validators keep for this tree only grows logarithmically with its size. ⟨pause: the tree prunes down to its frontier⟩
 
 But on the right are nullifiers. Every transaction has to show that its input nullifiers haven't appeared before on chain, and that's an exclusion test against all of history, so the whole set is sitting in memory on the critical path of every validator.
 
@@ -74,13 +112,13 @@ And to make matters worse, at Visa-level throughput, this set's growing by about
 
 ### 0.2 — The thesis, the black box, and our protagonist
 
-Tachyon's solution to this starts from one principle, which is to move validation off the critical path of consensus and onto the client whenever we can. Consensus keeps only nullifiers from the recent history, and then everything older than that gets cut loose. ⟨pause: the grid is scissored, older history flies to wallets⟩ The spender just has to have a proof that their nullifier doesn't appear anywhere in that older history.
+Tachyon's solution to this starts from one principle, which is to move validation off the critical path of consensus and onto the client whenever we can. Consensus keeps only nullifiers from the recent history, and then everything older than that can be pruned from validator state. ⟨pause: the grid is scissored, older history flies to wallets⟩ The spender just has to have a proof that their nullifier doesn't appear anywhere in that older history.
 
 The trick is that that proof can't be made once and forgotten. Every new block has more history that it has to cover, so it's built incrementally as proof-carrying data, and it's extended a little each time as the chain moves.
 
 All of this is running on Ragu, which is a proof-carrying data system in the Halo lineage, over the Pasta curves with no trusted setup. We'll treat it as a black box with two parts. The fuse part takes two proofs and a little bit of new work, and then hands back a single proof that covers all of it. The query part answers evaluations. We commit to a polynomial, we name a point, we get back its value. ⟨pause: fuse and query parts animate⟩ Ragu is designed to expose these evaluation claims directly and to fold them into the proof system's own claims, so that you're not paying for them in circuit constraints. For performance, as we'll see, this is pretty critical.
 
-Time in Tachyon is cut into epochs, which are long stretches of blocks. To go through the design, we're going to follow one note. It's born in epoch, let's say, five, and it's spent in epoch nine. ⟨pause: note card docks, epoch rail draws itself⟩ And every piece of Tachyon is going to show up exactly when this note needs it.
+Time in Tachyon is divided into epochs, which are long stretches of blocks. To go through the design, we're going to follow one note. It's born in epoch, let's say, five, and it's spent in epoch nine. ⟨pause: note card docks, epoch rail draws itself⟩ And every piece of Tachyon is going to show up exactly when this note needs it.
 
 ---
 
@@ -88,47 +126,45 @@ Time in Tachyon is cut into epochs, which are long stretches of blocks. To go th
 
 ### 1.1 — Why Zcash keys got complicated
 
-Before the note can exist, it needs an owner.
+In Zcash, each note is associated with a family of keys. We start by examining this key structure.
 
 The first Zcash shielded protocol, Sprout, which followed the original Zerocash paper, really only needed two keys, which were a payment key and an encryption key. Orchard's key diagram is a lot more complicated than that, so why is that? ⟨pause: Orchard's key diagram beside Sprout's two keys⟩
 
-The first reason is that proving and authorizing turned into different roles. Hardware wallets, for example, are pretty resource-constrained, and they can't really run a prover. So from Sapling on, authorization became a signature that's made outside the proof. But a signature under a fixed key would link every spend by the same owner, so the key gets re-randomized each time. a-k sits in the secret witness, and the instance carries r-k, which is a-k plus alpha times G.
+The first reason is that proving and authorizing turned into different roles. Hardware wallets, for example, are pretty resource-constrained, and they can't really run a computationally heavy proving algorithm. So from Sapling on, authorization became a signature that's made outside the proof. But a signature under a fixed key would link every spend by the same owner, so the key gets re-randomized each time. The authorization key, a-k, sits in the secret witness, and the instance carries the randomized key, r-k, which is a-k plus alpha times G, where alpha is the randomizer.
 
-The second reason is that the address is actually doing two jobs at once. It declares who owns the note, and it also carries the transmission key, which the sender uses to encrypt the note's secrets on chain. Diversified addresses exist for that second job. They refresh the transmission key for each sender, while a single incoming viewing key, i-v-k, can still detect every incoming note.
+The second reason is that the address is actually doing two jobs at once. It declares who owns the note, and it also carries the transmission key, which the sender uses to encrypt the note's secrets, which get distributed on chain. Diversified addresses exist for that second job. They refresh the transmission key for each sender, while a single incoming viewing key, i-v-k, can still detect every incoming note for the same owner.
 
 The third reason is selective disclosure. You might want to show your incoming or outgoing flows to, say, an auditor, without handing over spend authority, and that's what brings in the outgoing viewing key and the rest of the viewing family.
 
-So which of these keys are actually enforcing ownership? Well, it turns out it's only two of them. The nullifier key, n-k, derives nullifiers, and the authorization key, a-k, authorizes spends. Everything else is really serving transmission and viewing.
+So which of these keys are actually enforcing ownership? Well, it turns out it's only two of them. The nullifier key, n-k, which derives nullifiers, and the authorization key, a-k, which authorizes the spending of notes. Everything else is really serving transmission and viewing.
 
 ### 1.2 — The cut
 
-Tachyon cuts along exactly that line. ⟨pause: the blade cuts the key tangle into two boxes⟩
+Tachyon takes exactly that observation and separates the concerns of spend authorization and note transmission into two different protocols. ⟨pause: the blade cuts the key tangle into two boxes⟩
 
-On one side sits the shielded protocol, and its job shrinks to the minimum the pool needs, which is to bind every note to an owner and make sure that only that owner can spend it. On the other side sits the payment protocol, which owns everything about getting a note to its recipient, so addresses, memo encryption, note discovery, and viewing.
+On one side sits the shielded protocol, and its job shrinks to the minimum that the pool needs, which is to bind every note to an owner and make sure that only that owner can spend it. On the other side sits the payment protocol, which owns everything about getting a note to its recipient, so addresses, memo encryption, note discovery, and viewing.
 
-The owner field of every note becomes a payment key, p-k, which is a binding commitment to the pair a-k and n-k. Because it's built from a hash, that gives us two things. It's succinct, and it's quantum-recoverable today. Handing out a-k, which is a Schnorr verification key, to every sender is a harvest-now, decrypt-later risk, but a hash commitment to it is not.
+The owner field of every note becomes a payment key, p-k, which is a binding commitment to the pair a-k and n-k. We instantiate this commitment with symmetric candidates so that it's succinct *and* quantum-recoverable today. Handing out a-k directly, which is a Schnorr verification key, to every sender, who potentially has access to a quantum computer, is a harvest-now, decrypt-later risk, but a hash commitment to it is not.
 
-The shielded protocol doesn't even constrain how a-k and n-k are derived. It only requires that they look like freshly sampled keys, and the derivation paths are really the wallet standard's business.
+The shielded protocol doesn't even constrain how a-k and n-k are derived. It only requires that they look like freshly sampled keys, and the concrete derivation paths are really up to the wallet implementation or some Z-I-P wallet standard.
 
-The security properties split along the same line. The shielded core keeps ledger indistinguishability, balance, note privacy, and spend unlinkability against an attacker who holds just your payment key. Full unlinkability against someone who holds your viewing key, and resistance to Faerie gold, become the payment protocol's job.
+The security properties are divided between the two protocols as well. The shielded core keeps ledger indistinguishability, balance, note privacy, and spend unlinkability against an attacker who holds just your payment key. Full unlinkability against someone who holds your viewing key, and resistance to Faerie gold, which is when a sender pays you twice with notes that share a nullifier, so that only one of them can ever be spent, become the payment protocol's job.
 
-The chain's role splits too. Besides maintaining the pool, it becomes a data-availability layer. Encrypted payment data still rides on chain, but the shielded protocol just carries those bytes without ever parsing them.
+The ledger's role splits too. Besides maintaining the pool, it becomes a data-availability layer. Encrypted memos are still transmitted on chain, but the shielded protocol just carries them as opaque bytes without ever parsing or interpreting them.
 
 Of course, a couple of familiar pieces don't change at all. Spend authorization is still RedPallas, with the same re-randomized key, and value balance is still the binding signature over homomorphic value commitments, exactly like in Sapling and Orchard.
 
-So what the cut really buys us is a smaller surface for each upgrade, cleaner security assumptions to audit, and two halves that can evolve in parallel.
+Ultimately, the separation gives us a streamlined and stable shielded core, a cleaner isolation of security assumptions for auditing, and greater flexibility in payment protocol designs that can evolve in parallel without upgrading the shielded pool.
 
 ### 1.3 — The note
 
-With an owner in hand, let's look at the note itself. A Tachyon note has four fields, which are the payment key p-k, the value v, a field called psi, and a commitment trapdoor, r-c-m.
+A Tachyon note has four fields, which are the payment key p-k, the value v, a field called psi, and a commitment trapdoor, r-c-m.
 
-Its commitment, c-m, commits to p-k, v, and psi, under the trapdoor r-c-m. It's built from Poseidon, which is a sponge hash, so it's purely symmetric.
+Its commitment, c-m, commits to p-k, v, and psi, under the trapdoor r-c-m. We instantiate it with Poseidon, which is a sponge hash, so it's purely symmetric.
 
 Sapling and Orchard use variants of the Pedersen commitment, which rest on discrete log, and Orchard actually has to put extra rules on how wallets derive r-c-m to stay quantum-recoverable. Tachyon's commitment doesn't need any of that.
 
-That leaves psi, which is a pseudorandom identity for the note, derived from the wallet's master key. And as we'll see, every nullifier this note will ever have hangs off of it.
-
-So now the note exists. Where does its commitment go?
+That leaves psi, which is a pseudorandom identity for the note, derived from the wallet's master key, and used as a seed to derive the note's nullifiers.
 
 ---
 
@@ -136,7 +172,7 @@ So now the note exists. Where does its commitment go?
 
 ### 2.1 — A set as the roots of a polynomial
 
-Let's take a set, say the numbers two, seven and eleven, in the field with thirteen elements. We build the polynomial whose roots are exactly those members, so X minus two, times X minus seven, times X minus eleven. ⟨pause: roots drop on the field line, product builds factor by factor⟩ Committing to it gives us an accumulator.
+Let's take a set, say the numbers two, seven and eleven, in the field with thirteen elements. We build the polynomial whose roots are exactly those members, so X minus two, times X minus seven, times X minus eleven. ⟨pause: roots drop on the field line, product builds factor by factor⟩ Committing to that polynomial gives us an accumulator, which is a short commitment to the whole set.
 
 Membership is just a single evaluation. Seven gives zero, and five gives something nonzero, so five isn't in the set. Both of these answers come from Ragu's query part.
 
@@ -146,33 +182,33 @@ Set operations become polynomial operations. Inserting an element multiplies by 
 
 Evaluation ignores multiplicity, so strictly speaking this is a multiset. But consensus refuses duplicate tachygrams, so every accumulator that matters in practice has distinct roots.
 
-Now, there's one subtlety here. Commitment binding says that the accumulator opens to one polynomial, but it doesn't say that polynomial has the published roots. A prover could slip in an extra root, or drop one, and then the queries would lie. ⟨pause: a ghost root sneaks in, the probe lies⟩ So Tachyon checks each accumulator against its published list of tachygrams. The verifier picks a random point r, and computes the product of r minus each tachygram itself, using only field operations, so there's no group work. Then it asks the commitment to open at r to that value. A false polynomial survives with probability at most its degree over the size of the field.
+Now, there's one subtlety here. Commitment binding says that the accumulator opens to one polynomial, but it doesn't say that polynomial has the published roots. A prover could slip in an extra root, or drop one, and then the queries would give wrong answers. ⟨pause: a ghost root sneaks in, the probe lies⟩ So Tachyon checks each accumulator against its published list of tachygrams. The verifier picks a random point r, and computes the product of r minus each tachygram itself, using only field operations, so there's no group work. Then it asks the commitment to open at r to that value. A false polynomial passes this check with probability at most its degree over the size of the field.
 
 ### 2.2 — The action and the stamp
 
-Now the note enters the pool. It's created by an output action, and in Tachyon an action description is just two values: a randomized key, r-k, and a value commitment, c-v. Spends and outputs both share that shape.
+Now the note enters the pool. It's created by an output action, and in Tachyon an action description is just two values, which are a randomized key, r-k, and a value commitment, c-v. Spend actions and output actions share this same description.
 
 Orchard's action carries the nullifier and the note commitment right in the description, but Tachyon pulls both of them out. ⟨pause: Orchard's action card morphs into (rk, cv)⟩ Nullifiers here won't stay fixed, as we'll see, so they can't live in a static description. Instead, the note binds to its action through r-k's randomizer. Alpha is a PRF of the note commitment and some fresh entropy, theta. For an output, r-k is just alpha times G, and for a spend, it's a-k plus alpha times G.
 
-A nice side effect is that an output's signing key is alpha itself. Creating a note doesn't need any spend authority, because the binding signature already guarantees that outputs are funded. So, for example, a hot device can sign outputs without a round trip to custody. And both forms of r-k are uniformly random points, so nobody can tell them apart.
+A nice side effect is that an output's signing key is alpha itself. Creating a note doesn't need any spend authority, because the binding signature already guarantees that outputs are funded. So, for example, a hot device can sign outputs without a round trip to custody. And both forms of r-k are uniformly random points, so nobody can tell a spend action from an output action by its r-k.
 
 So what does an output actually prove? Its value commitment hides minus v, and the value is in range, so at most the total money supply. The commitment c-m opens to this note, the key r-k is bound to c-m through alpha, and no published tachygram is zero. There's no anchor and no epoch in there, because history can't affect an output.
 
-A bundle's actions form a multiset too. Each action's r-k and c-v are hashed with Poseidon, and the results are accumulated just like before, and that's the action accumulator.
+A bundle's actions form a multiset too. Each action's r-k and c-v are hashed with Poseidon, and the results are accumulated just like before, and that's the action accumulator. ⟨pause⟩
 
 Next up is the stamp. A stamp is the bundle's proof-carrying data proof. Its public inputs are the action accumulator, the tachygram accumulator, and an anchor, and alongside that, it publishes the tachygrams themselves. Our note's commitment is one of them, and there's a second slot right next to it that we'll fill in later.
 
-As for where the stamp lives, the transaction ID commits only to effecting data, which is the action accumulator, the value balance, and a digest of the memo bytes. The stamp sits with the signatures, in the authorization data, which is malleable by design. So a relayer can swap out a stamp, and that changes the witness transaction ID, but not the transaction ID. And the memo is safe from that rewriting, because every signature covers its digest through the sighash.
+As for where the stamp lives, the transaction ID commits only to *effecting data*, which is the action accumulator, the value balance, and a digest of the memo bytes. The stamp and the signatures, in contrast, are *authorization data*, which is malleable by design. So a user can update a stamp, which changes the witness transaction ID, but not the transaction ID. And the memo is safe from that rewriting, because every signature covers its digest through the sighash.
 
 ### 2.3 — The anchor chain
 
 The stamp then lands on the anchor chain. This is a hash chain that's carried in the block header, and it ticks once per stamp. Each tick absorbs the stamp's tachygram accumulator along with the current epoch number, so the new anchor is the hash of the old anchor, the epoch, and the accumulator. ⟨pause: beads absorb accumulator chips along the rail⟩ That means the chain moves at a granularity that's finer than a block, but coarser than a transaction.
 
-At every transition between epochs, consensus appends one special tick, called a sentinel, which is a domain-separated hash of the last anchor of the old epoch and the new epoch's number. So every epoch, even one with no stamps at all, gets two authenticated boundary posts, and every anchor on the canonical chain belongs to exactly one epoch.
+At every transition between epochs, consensus appends one special tick, called a sentinel, which is a domain-separated hash of the last anchor of the old epoch and the new epoch's number. So every epoch, even one with no stamps at all, gets two authenticated boundaries, and every anchor on the canonical chain belongs to exactly one epoch.
 
 Here's our note's stamp, landing inside epoch five. ⟨pause: our bead lands in epoch five⟩
 
-You might be wondering why we anchor per stamp, and not per block. It really comes down to validator work. Each stamp already carries its accumulator, which is checked cheaply against its published list, so a validator just hashes it in. A per-block anchor would make every validator rebuild a block-wide accumulator from scratch, which means re-accumulating every tachygram, interpolating the product, and committing to it. That's a multi-scalar multiplication sitting right on the critical path.
+You might be wondering why we anchor per stamp, and not per block. It really comes down to validator work. Each stamp already carries its accumulator, which is checked cheaply against its published list, so a validator just hashes it in. A per-block anchor would make every validator rebuild a block-wide accumulator from scratch, which means re-accumulating every tachygram, interpolating the product, and committing to it. That's a multi-scalar multiplication sitting right on the critical path of block validation.
 
 ---
 
@@ -194,7 +230,7 @@ This breaks an invariant that's as old as Zerocash, which is one note, one globa
 
 Ideally, we want a deterministic function of three inputs, which are the nullifier key n-k, the note's psi, and the epoch, e. Its outputs should look random, bind both the spending authority and the note, and stay unlinkable across epochs to anyone who doesn't have n-k.
 
-A constrained PRF would let the wallet hand the service a key that only works for a range of epochs. But the known candidate, which is built from a GGM tree, is pretty expensive in a circuit. So Tachyon takes a simpler route. The user derives the nullifiers and proves them, and the service gets nothing but bare pairs of an epoch and a nullifier value, with no evidence linking them to any note at all. In fact, a real syncing request could just as well be a decoy list. The binding back to the note happens later, on the wallet's side.
+A constrained PRF would let the wallet hand the service a key that only works for a range of epochs. But the known candidate, which is built from a GGM tree, the classic Goldreich–Goldwasser–Micali construction, is pretty expensive in a circuit. So Tachyon takes a simpler route. The user derives the nullifiers and proves them, and the service gets nothing but bare pairs of an epoch and a nullifier value, with no evidence linking them to any note at all. In fact, a real syncing request could just as well be a decoy list. The binding back to the note happens later, on the wallet's side.
 
 Concretely, the wallet first derives a per-note master key, m-k, as a Poseidon hash of n-k and psi. Then one Poseidon permutation of m-k squeezes out a whole window of nullifiers at once, as many as the sponge's rate. With a rate of four, one permutation gives epochs four through seven, and the next one gives eight through eleven. ⟨pause: the sponge squeezes four nullifiers per permutation onto the rail⟩ From here on, we'll just write the nullifier at epoch e as f of m-k, at e.
 
@@ -208,7 +244,7 @@ And that's what the empty slot next to our note's commitment is for. An output f
 
 The wallet has derived nullifiers over a range of epochs, R, let's say from four up to twelve. The service has tested a subrange, S, which is epochs six, seven, and eight, and it's committed to what it tested. Eventually the wallet has to prove that every pair the service tested is one it derived itself, at the same epoch index. And both sides are building their commitments a little bit at a time, across many proof steps.
 
-Now, a vector commitment would do this, but the known schemes with subvector openings live on RSA groups or on pairings, and neither of those is friendly to our circuits. In a standard vector commitment, though, the prover can commit to anything, so the scheme has to defend against that. Here, every update to a commitment is itself proven correct against its running value. So honest committing is enforced, and that really opens up the design space.
+Now, a vector commitment would do this, but the known schemes with subvector openings live on RSA groups or on pairings, and neither of those is friendly to our circuits. In a standard vector commitment, though, the prover can commit to anything, so the scheme has to defend against that. Here, every update to a commitment is itself proven correct against its running value. So honest committing is enforced by the proofs themselves, and the commitment no longer has to defend against a malicious committer, which really opens up the design space.
 
 ⟨pause⟩
 
@@ -228,7 +264,7 @@ One word of caution here. Multiplication is commutative, so division proves incl
 
 So the service has to prove that our nullifier for epoch six never appeared anywhere in epoch six. How does it do that?
 
-The naive way is to test it against every stamp's accumulator in the epoch. But union is multiplication, so we can multiply all of the epoch's stamp polynomials into one epoch accumulator, e of X, whose roots are every tachygram published that epoch. The service proves it correct against the anchor chain with random-point checks. And since those queries are served by the folding scheme rather than a step circuit, e of X can have as high a degree as the commitment scheme allows. The work is linear in the epoch, but it's paid once, and shared.
+The naive way is to test it against every stamp's accumulator in the epoch. But union is multiplication, so we can multiply all of the epoch's stamp polynomials into one epoch accumulator, e of X, whose roots are every tachygram published that epoch. The service proves it correct against the anchor chain with random-point checks. And since those queries are served by Ragu's query part, which folds them into the proof system's own claims, rather than by a step circuit, e of X can have as high a degree as the commitment scheme allows. The work is linear in the epoch, but it's paid once, and shared by every service that needs it.
 
 Let's run the numbers on that. A pretty modest one hundred transactions per second, all two-in, two-out, over a two-week epoch, gives us more than four hundred and eighty million tachygrams. Our polynomial commitment uses a Bulletproofs-style inner product argument, and its verifier is linear in the degree, so a single verification would take more than sixteen minutes. ⟨pause: degree counter spins to 4.8 × 10⁸, stopwatch passes 16:00⟩
 
@@ -256,9 +292,7 @@ One element at a time is cheap, but we need to certify a whole bucket, and the p
 
 Let's take a bucket's accumulator, f, the product of X minus x-i over its members, and suppose every member is a square. Consensus refuses duplicates, so the roots are distinct, and that means we can interpolate a polynomial, g, through the points x-i, y-i, where each y-i is a square root of x-i. ⟨pause⟩ Now g squared minus X vanishes at every member, so f divides it, and the quotient, h, is the witness. The prover commits to g and h. The verifier throws out a random point, r, and checks that g of r, squared, minus r, equals f of r times h of r. ⟨pause: both sides print the same element⟩ So one identity, at one point, certifies that every root of f is a square. The non-residue version carries the constant c, and an offset R just replaces X with X plus R.
 
-Now let's use that to split a bucket.
-
-Under a discriminant R, we split f into two pieces, q-zero, which holds the non-residues, and q-one, which holds the residues. ⟨pause: the blade cleaves the bucket into amber and cyan⟩ Four checks at a random point keep that split honest. The first is decomposition, so f equals q-zero times q-one, which means no root was added, and none was dropped. The second is that every root of q-one is a residue, and the third is that every root of q-zero is a non-residue. And the fourth is that q-zero at minus R is nonzero. That last one is what enforces the convention. q-zero is a product of linear factors, so a nonzero value at minus R means minus R isn't one of its roots. Together with the first check, if minus R is in the bucket at all, it's forced into q-one.
+To split a bucket under a discriminant R, we break f into two pieces, q-zero, which holds the non-residues, and q-one, which holds the residues. ⟨pause: the blade cleaves the bucket into amber and cyan⟩ Four checks at a random point keep that split honest. The first is decomposition, so f equals q-zero times q-one, which means no root was added, and none was dropped. The second is that every root of q-one is a residue, and the third is that every root of q-zero is a non-residue. And the fourth is that q-zero at minus R is nonzero. That last one is what enforces the convention. q-zero is a product of linear factors, so a nonzero value at minus R means minus R isn't one of its roots. Together with the first check, if minus R is in the bucket at all, it's forced into q-one.
 
 ### 4.4 — Routing: decompose, merge, and a jagged frontier
 
@@ -272,7 +306,7 @@ Some profiles lag behind, though. Fluctuations in size leave a few of them still
 
 In the proof tree, each split is one step that proves the product and the minus-R check, followed by two descents. Each descent returns one side, and checks the purity of the other side. So once both children are derived, both buckets are certified pure.
 
-What about an attacker who grinds tachygrams to overload a single bucket? The discriminants have to stay unpredictable while tachygrams are being chosen. So each service samples its first offset privately, steps it up by one each round, and reveals it only after the epoch closes. That choice affects balance, but never soundness. The proofs certify any choice, and a badly balanced routing can just be ignored in favor of an honest service's.
+What about an attacker who grinds tachygrams, which means trying random values until enough of them land in a single bucket to overload it? The discriminants have to stay unpredictable while tachygrams are being chosen. So each service samples its first offset privately, steps it up by one each round, and reveals it only after the epoch closes. That choice affects balance, but never soundness. The proofs certify any choice, and a badly balanced routing can just be ignored in favor of an honest service's.
 
 And in case you're worried about scale, even at fifty thousand transactions per second, a thirty-two bit profile still has plenty of room to spare.
 
@@ -290,11 +324,9 @@ So the sixteen-minute linear verification turned into at most thirteen hashes, p
 
 ### 5.1 — Steps, headers, bridges
 
-Now that we have all the pieces, let's look at what the actual proof looks like.
-
 A spend has to satisfy a pretty long statement, and so does an output, and so does the bundle that glues them together. We don't prove those in one piece. Instead, we break them into steps. ⟨pause: statement cards shatter into a tree of steps⟩ A step is a bounded circuit. It takes up to two child proofs and some private witness, checks part of the statement, and emits a new proof whose public output is a header, which is the data in proof-carrying data. Headers flow upward, from children to parents.
 
-A parent bridges its children. It loads both headers, and checks that the fields which have to agree really do, like the same note commitment, matching sentinels, or the same epoch. A decomposition is sound exactly when there's enough bridging.
+A parent bridges its children. It loads both headers, and checks that the fields which have to agree really do, like the same note commitment, matching sentinels, or the same epoch. Breaking a statement into steps is sound exactly when every field that two steps share gets bridged like this.
 
 From here on, we'll use three colors. Gold steps run on the wallet, and they see the note. Cyan steps run on a service, and they only see opaque values. And white is shared evidence that anyone can use, which is anchor chain segments for the active epoch, and evidence trees for the closed ones.
 
@@ -308,11 +340,11 @@ Then SpendBind opens the note, and this is where the spend statement actually ge
 
 The last step is StampLift, which consumes a shared anchor chain segment and moves the stamp to a later anchor. That segment contains no sentinel, so a lift can never cross into another epoch. And the lift isn't just a convenience, by the way. Without it, the stamp's anchor would point right at the note's creation, so lifting is actually part of what keeps the spend unlinkable. ⟨pause: the full base tree, checklist complete⟩
 
-And it turns out every spend ends this way, with SpendBind, merge, and lift. So the only question left is what feeds SpendBind when the note is older.
+And it turns out every spend ends this way, with SpendBind, merge, and lift. For an older note, the only thing that changes is what feeds SpendBind.
 
 ### 5.3 — Past-epoch spend: our original note
 
-So now let's go back to our original note, which was born in epoch five and is being spent in epoch nine. Its history splits into three parts.
+Our original note was born in epoch five and is being spent in epoch nine, so its history splits into three parts.
 
 Let's start with the epoch it was born in. This part stays on the wallet, because in that one epoch the wallet has to show both that the note exists and that it wasn't already spent. So it opens epoch five's evidence tree twice, once at the bucket for its epoch-five nullifier, and once at the bucket for its commitment. NoteUnspentInit opens the note with its keys and re-derives that nullifier, and then it checks that the nullifier's profile selects the bucket and proves it's absent. SpendableReinit then joins that with the commitment's membership opening, for the same epoch and the same sentinels. What comes out is a fully established spendable header, which is valid from the start of epoch six. ⟨pause: the spendable header glows⟩
 
@@ -320,7 +352,7 @@ Epochs six through eight are where delegation pays off, because here the work sp
 
 Meanwhile, the wallet is deriving its own range. NoteSeed opens the note once, and emits its master key header. Each NullifierDerive squeezes out one window, so four up to eight, and then eight up to twelve, and NullifierFuse joins them into one commitment, over four to twelve.
 
-And then there's the join, which is where everything comes together. UnspentBind checks that the service's range is nonempty and sits inside the wallet's, and then runs the division from before, so the service's product divides the wallet's. ⟨pause: the service's stack lifts out of the wallet's⟩ That's the moment where the delegated, note-independent work becomes about this specific note. SpendableLift then seams the result onto the spendable header, with sentinel equality at the seam. And now the note is spendable through the start of epoch nine.
+And then there's the join, which is where everything comes together. UnspentBind checks that the service's range is nonempty and sits inside the wallet's, and then runs the division from before, so the service's product divides the wallet's. ⟨pause: the service's stack lifts out of the wallet's⟩ That's the moment where the delegated, note-independent work becomes about this specific note. SpendableLift then joins the result onto the spendable header, and checks that the sentinels match where the two meet. And now the note is spendable through the start of epoch nine.
 
 From there, it's basically the same as the simple spend. SpendBind derives the nullifiers for nine and ten, StampMerge joins this stamp with the other spend and the outputs, and one StampLift moves the whole thing to the transaction's target anchor in epoch nine. ⟨pause: the full tree: one stamp, two spends, two outputs⟩
 
@@ -350,29 +382,29 @@ So together, the adjacent pair and the two-epoch window close the gap that the g
 
 ### 6.2 — Aggregation: from many stamps to one
 
-So far, every transaction has been a standalone bundle, which is one with its own stamp, proven by its own wallet. Aggregation turns many standalone bundles into one aggregate bundle, with a single stamp. ⟨pause: standalone bundles stream into the mempool, each with its own stamp⟩
+So far, every transaction has been a standalone bundle, which is one with its own stamp. Aggregation turns many standalone bundles into one aggregate bundle, with a single stamp. ⟨pause: standalone bundles stream into the mempool, each with its own stamp⟩
 
-Let's follow the life cycle, starting with wallets publishing their standalone bundles. An aggregator then picks some of them and combines them. In the full protocol, anyone can aggregate, and aggregates can be relayed and merged again. But a miner has the strongest reason to do it, because every byte of proof that's saved is room for more fees. So here, we'll just let the miner be the only aggregator.
+Let's follow the life cycle, starting with wallets publishing their standalone bundles. An aggregator then picks some of them and combines them. In the full protocol, anyone can aggregate, and aggregates can be relayed and merged again. But a miner has the strongest incentive to do it, because every byte of proof that's saved is room for more transactions, thus more fees. So here, we'll just let the miner be the only aggregator.
 
-The first thing the miner has to deal with is that the stamps are targeting different anchors. So it lifts each one to a single common anchor, inside one epoch, and never across a sentinel. It's the same StampLift as before. ⟨pause: stamps slide to a common anchor⟩ And no lift depends on another one, so they can all run at once.
+The first thing the miner has to deal with is that the stamps are targeting different anchors. So it lifts each one to a single common anchor, inside the same spending epoch, and never across a sentinel. It's the same StampLift step as before. ⟨pause: stamps slide to a common anchor⟩ And no lift depends on another one, so they can all run in parallel.
 
 Once they share an anchor, the miner can merge them. StampMerge takes two stamps and returns one. It unions the tachygrams, multiplies the accumulators, and fuses the proofs. We pair the stamps up, then pair the results, and keep going up a binary tree until there's only one stamp left. ⟨pause: the merge tree folds up to a single stamp⟩ Consensus refuses duplicate tachygrams, so a merge of two overlapping sets could never land on chain, and there's nothing extra to enforce.
 
-When the miner assembles the block, it carries the aggregate, along with every transaction it covers. But each covered transaction drops its own stamp, and points at the aggregate's witness transaction ID instead. ⟨pause: each transaction swaps its stamp for a reference⟩ And that's why the stamp lives in the authorization data. Swapping it changes the witness ID, but never the transaction ID, so every signature stays valid.
+When the miner assembles the block, it carries the aggregate, along with every transaction it covers. But each covered transaction *drops* its own stamp, and *points at* the aggregate's witness transaction ID instead. ⟨pause: each transaction swaps its stamp for a reference⟩ And that's why the stamp lives in the authorization data. Swapping it changes the witness ID, but never the transaction ID, so every signature stays valid.
 
-And on the other end, a validator checks that the tachygrams are distinct, that the aggregate's coverage matches the transactions pointing at it, and that one proof verifies. It's just one proof, no matter how many transactions it covers.
+And on the other end, a validator checks that the tachygrams are distinct, that the aggregate's coverage matches the transactions pointing at it, and that one *aggregated* proof verifies.
 
 ### 6.3 — What aggregation buys
 
-So let's put some numbers on this, with the simplification we just made, which is that wallets send standalone bundles and the miner aggregates alone.
+So let's see some concrete numbers to put the amortized cost of aggregation into perspective.
 
-Let's start with latency, and the good news is that all of the lifts run in parallel, so together they cost one proving step. The merges form a binary tree, so a block of N transactions adds log N more. ⟨pause: a depth counter beside the merge tree⟩ With enough cores, doubling the traffic only costs one more step. Today, a step takes about one point two seconds on a laptop.
+Let's start with latency, and the good news is that all of the lifts run in parallel, so together they cost one proving step. The merges form a binary tree, so a block of N transactions adds log N more. ⟨pause: a depth counter beside the merge tree⟩ With enough cores, doubling the traffic only costs one more step. Today, a step takes about one point two seconds on a consumer laptop.
 
-So how much time does the miner actually have? A block comes every twenty-five seconds. If we subtract two seconds to send it out, and another two to verify it and run the rest of the node, we're left with about twenty seconds, which is sixteen steps, so one lift and fifteen levels of merging. ⟨pause: the merge tree grows to fifteen levels⟩ Fifteen levels cover more than thirty-two thousand transactions, which is over thirteen hundred per second, from a single miner.
+Now, after the NU7 upgrade, the Zcash block time becomes twenty-five seconds. If we reserve four seconds for data transmission and for node logic unrelated to proposing the new block, we're left with twenty-one seconds, which is seventeen steps, so one for anchor lifting and sixteen levels of binary merging. ⟨pause: the merge tree grows to sixteen levels⟩ Sixteen levels cover more than sixty-four thousand transactions, which is over twenty-six hundred per second, from a single miner.
 
-Size is the other half of the story. A compressed proof is about seven point four kilobytes. A two-in, two-out transaction is only about seven hundred and seventy bytes, which is eight tachygrams, four actions of r-k and c-v, and a small encrypted memo. ⟨pause: a block bar, proof share against payload⟩ Without aggregation, every transaction is hauling around a proof that's ten times its own size, and a two-megabyte block holds about two hundred and forty of them. With aggregation, the block carries a single proof, and fits about twenty-six hundred. So each transaction's share of the proof drops from seven kilobytes to under three bytes.
+Size is the other half of the story. A compressed proof is about seven point four kilobytes. A two-in, two-out transaction carries eight tachygrams, four actions of r-k and c-v, four sixty-four-byte action signatures, the binding signature, a small encrypted memo, and, once it's aggregated, a pointer to the stamp it's covered by, which puts it at about one point one five kilobytes. ⟨pause: a block bar, proof share against payload⟩ Without aggregation, every transaction is hauling around a proof that's more than six times its own size, and a two-megabyte block holds only about two hundred and thirty of them. With aggregation, the block carries a single proof, and fits about seventeen hundred, which is roughly seventy transactions per second. So each transaction's share of the proof drops from seven kilobytes to about four bytes.
 
-So it's really size, and not proving, that's the ceiling. Let's say we raise the block limit to twenty megabytes. That fits about twenty-six thousand transactions, which is roughly a thousand per second. ⟨pause: block bar grows, a thousand per second⟩ And proving them still fits in the window, at sixteen steps and about nineteen seconds.
+So it's really size, and not proving, that's the ceiling. Let's say we raise the block limit to twenty megabytes. That fits about seventeen thousand transactions, which is roughly seven hundred per second. ⟨pause: block bar grows, seven hundred per second⟩ And proving them still fits in the window, at sixteen steps and about nineteen seconds.
 
 So a validator checks one proof per block, and the proof's share of each transaction shrinks as traffic grows. Proof size stops being the bottleneck, and what's left is delivering the notes themselves.
 
@@ -382,13 +414,13 @@ So a validator checks one proof per block, and the proof's share of each transac
 
 ### 7.1 — Addresses, tags, and private retrieval
 
-The cut we made at the start left the payment protocol in charge of delivering notes. So let's sketch the leading design, which is being built by ValarGroup.
+Delivering notes is the payment protocol's job, and the leading design for it is being built by ValarGroup, so let's sketch that design.
 
-An address is a pair of the payment key and an ML-KEM encapsulation key, and both of them are fresh for each sender. So why not use Orchard-style diversification? Well, because it isn't quantum-private. All those diversified keys share one incoming viewing key, and anyone who can break one discrete log recovers it, which exposes every incoming note, past and future. ⟨pause: a quantum lens over i-v-k opens every note⟩ ML-KEM is post-quantum, but it doesn't have an analogue of many unlinkable keys sharing one decryption key.
+An address is a pair of the payment key and an encapsulation key for ML-KEM, which is the NIST standard for post-quantum key encapsulation, and both of them are fresh for each sender. So why not use Orchard-style diversification? Well, because it isn't quantum-private. All those diversified keys share one incoming viewing key, and anyone who can break one discrete log recovers it, which exposes every incoming note, past and future. ⟨pause: a quantum lens over i-v-k opens every note⟩ ML-KEM is post-quantum, but it doesn't have an analogue of many unlinkable keys sharing one decryption key.
 
 So discovery needs a different shortcut, and that's where tags come in. Each encrypted memo carries a short tag. The first-contact tag is a hash of the encapsulation key, so the recipient can find the handshake before it knows the shared secret. Every later tag is a hash of the shared secret and a counter, which is predictable to the two parties, opaque to everyone else, and fresh for every note, since tags appear on chain.
 
-So instead of trial-decrypting the whole chain, your wallet looks up its tags with private information retrieval, which reveals nothing about the query. And it turns out the same machinery also includes a tachygram database, which privately supplies the stamp and anchor data that the spend proof needs.
+So instead of trial-decrypting the whole chain, your wallet looks up its tags with private information retrieval, which lets it fetch entries from a server without the server learning which ones it asked for. And it turns out the same machinery also includes a tachygram database, which privately supplies the stamp and anchor data that the spend proof needs.
 
 And finally, there's Faerie gold. Tachyon's notes don't have a canonical position, so the shielded protocol can't bind psi the way Orchard binds rho. Instead, the wallet checks each incoming note's nullifier at a fixed reference epoch against the notes it already holds, and a reused psi collides right there.
 
@@ -400,7 +432,7 @@ And finally, there's Faerie gold. Tachyon's notes don't have a canonical positio
 
 That leaves the quantum question. Tachyon's stance is private today and sound after an upgrade, and that asymmetry is deliberate. Privacy has to hold retroactively, because today's chain can be harvested now and decrypted whenever the hardware arrives, so anything guarding privacy has to already be post-quantum. Soundness, meaning that nobody forges and nobody steals, only matters at spend time, so it can wait for a coordinated network upgrade.
 
-So let's audit today's chain against that bar. Owner fields and note commitments are Poseidon, nullifiers are P R F outputs, and memos are M L KEM plus symmetric encryption, so all of that is already quantum-safe. That leaves three things that still rest on discrete log, which are value commitments, randomized keys, and the binding key. The value commitment is perfectly hiding, so there's nothing to decrypt there. And what about the randomized key? A quantum computer can take its discrete log and recover a s k plus alpha, but alpha is a fresh P R F mask, so what it gets is a random-looking scalar that doesn't link to anything. ⟨pause: the quantum lens: alpha pixelates the link⟩ So the full power of a quantum computer against today's Tachyon is forgery, which is the half that can wait for the upgrade.
+So let's audit today's chain against that bar. Owner fields and note commitments are Poseidon, nullifiers are P R F outputs, and memos are M L KEM plus symmetric encryption, so all of that is already quantum-safe. That leaves three things that still rest on discrete log, which are value commitments, randomized keys, and the binding key. The value commitment is perfectly hiding, so there's nothing to decrypt there. And what about the randomized key? A quantum computer can take its discrete log and recover a-s-k, which is the secret key behind a-k, plus alpha, but alpha is a fresh P R F mask, so what it gets is a random-looking scalar that doesn't link to anything. ⟨pause: the quantum lens: alpha pixelates the link⟩ So the full power of a quantum computer against today's Tachyon is forgery, which is the half that can wait for the upgrade.
 
 When the upgrade comes, there are two swaps. The first one is authorization, and the problem there is that re-randomization is intrinsically discrete-log, and no post-quantum signature does it. So the replacement recovers unlinkability from zero knowledge instead, by proving in circuit that you know a valid post-quantum signature. Schemes like CAPSS are built to be cheap exactly there. Authorization then folds into the transaction's PCD proof, the randomized key leaves the action description entirely, and the note-to-action binding it used to carry through alpha gets re-established as an explicit constraint in the statement. The second swap is the proof system itself, where Ragu's discrete-log commitments get swapped for lattice-based folding. The recursive structure that makes spendability proofs incremental survives, and only the hardness assumption underneath changes. The concrete lattice constructions are still active research.
 

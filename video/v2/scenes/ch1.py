@@ -122,14 +122,14 @@ def bands():
 
 
 def cut_buys():
-    core_name = label("a smaller, stable shielded core", size=FS_HEAD, color=GOLD, weight="BOLD")
+    core_name = label("a streamlined, stable shielded core", size=FS_HEAD, color=GOLD, weight="BOLD")
     core_box = panel(core_name.get_width() + 1.0, 1.25, color=GOLD, fill_opacity=0.1).move_to([0, 2.05, 0])
     core_name.move_to(core_box)
-    stable = label("cleaner security assumptions to audit", size=FS_BODY, color=STAR).move_to([0, 0.6, 0])
+    stable = label("cleaner isolation of security assumptions for auditing", size=FS_BODY, color=STAR).move_to([0, 0.6, 0])
     modules = VGroup(*[key_chip(t, color=CYAN, size=FS_BODY) for t in
                        ["payment protocol A", "payment protocol B", "payment protocol C"]])
     modules.arrange(RIGHT, buff=0.7).move_to([0, -2.0, 0])
-    evolve = label("two halves evolving in parallel", size=FS_BODY, color=CYAN).move_to([0, -3.05, 0])
+    evolve = label("evolving in parallel, without upgrading the pool", size=FS_BODY, color=CYAN).move_to([0, -3.05, 0])
     return core_box, core_name, stable, modules, evolve
 
 
@@ -151,11 +151,32 @@ class Scene11(TimedScene):
         SID = "1.1"
         A = lambda p, o=1: anchor(SID, p, o)  # noqa: E731
 
+        # opener: our note, with a family of keys fanned out behind it
+        card = note_card(filled=False, size=FS_HEAD, slot_w=1.1, slot_h=0.8).move_to(DOWN * 0.8)
+        fan_keys = [('"sk"', PNG_SK), ('"ask"', PNG_SPEND), ('"ak"', PNG_FVK), ('"nk"', PNG_FVK),
+                    ('"ivk"', PNG_IVK), ('"ovk"', PNG_OVK), ('"d"', PNG_ADDR), ('"pk"_"d"', PNG_ADDR)]
+        fan = VGroup(*[kbox([t], col, size=30) for t, col in fan_keys])
+        hub = card.get_center() + DOWN * 0.4
+        for i, k in enumerate(fan):
+            ang = PI * (0.9 - 0.8 * i / (len(fan) - 1))
+            k.move_to(hub + 3.6 * np.array([np.cos(ang), 0.92 * np.sin(ang), 0]))
+        seeds = [k.copy().scale(0.3).move_to(card).set_opacity(0) for k in fan]
+        self.wait(0.6)
+        self.pad_to(A("note") - 0.5)
+        self.play(FadeIn(card, scale=0.92), run_time=0.8)
+        self.pad_to(A("family of keys") - 0.4)
+        self.play(LaggedStart(*[ReplacementTransform(s, k) for s, k in zip(seeds, fan)], lag_ratio=0.12),
+                  run_time=1.4)
+        self.add(card)
+        self.pad_to(A("key structure") - 0.2)
+        self.play(LaggedStart(*[Indicate(k[1], color=PNG_INK, scale_factor=1.15) for k in fan],
+                              lag_ratio=0.1), run_time=1.0)
+
         full = ImageMobject(ZK_PNG)
         full.set_width(13.4 * 0.96).move_to(DOWN * 0.05)
-        self.wait(0.5)
-        self.play(FadeIn(full, scale=1.03), run_time=1.6)
-        self.play(full.animate.set_width(13.4).move_to(DOWN * 0.05), run_time=5.5, rate_func=smooth)
+        self.play(FadeOut(VGroup(card, fan), scale=1.15), run_time=0.6)
+        self.play(FadeIn(full, scale=1.03), run_time=1.0)
+        self.play(full.animate.set_width(13.4).move_to(DOWN * 0.05), run_time=1.3, rate_func=smooth)
 
         # Sprout: two keys
         self.pad_to(A("sprout") - 0.2)
@@ -163,13 +184,18 @@ class Scene11(TimedScene):
         self.play(ShowCreation(r_sprout), run_time=0.5)
         self.pad_to(A("two keys") - 0.1)
         self.play(Indicate(r_sprout, color=GOLD, scale_factor=1.05), run_time=0.8)
-        # Orchard: not that
+        # Orchard: a lot more complicated
         self.pad_to(A("orchard's key diagram|orchards key diagram") - 0.2)
         r_orch = pix_rect(full, FULL_DIMS, ORCHARD_PANEL)
-        self.play(FadeOut(r_sprout), ShowCreation(r_orch), run_time=0.7)
-        self.pad_to(A("where did all") - 0.3)
-        title = scene_title("Where did all of this come from?")
-        self.play(Write(title), run_time=1.2)
+        self.play(r_sprout.animate.set_stroke(opacity=0.35), ShowCreation(r_orch), run_time=0.7)
+        self.pad_to(A("why is that") - 0.2)
+        title = scene_title("Why so complicated?")
+        self.play(Write(title), run_time=0.75)
+        # PAUSE: Orchard's key diagram beside Sprout's two keys
+        self.pad_to(21.8)
+        self.play(r_sprout.animate.set_stroke(opacity=1.0), run_time=0.3)
+        self.play(Indicate(r_sprout, color=GOLD, scale_factor=1.04),
+                  Indicate(r_orch, color=GOLD, scale_factor=1.015), run_time=0.8)
 
         # zoom: the Orchard panel lifts out, the forces read beside it
         crop = ImageMobject(ZK_ORCHARD_PNG)
@@ -178,12 +204,13 @@ class Scene11(TimedScene):
         self.pad_to(A("first reason") - 0.4)
         self.add(crop)
         self.play(crop.animate.set_height(CROP_H).move_to(CROP_POS), FadeOut(full),
-                  FadeOut(r_orch), FadeOut(title), run_time=1.3)
+                  FadeOut(r_orch), FadeOut(r_sprout), FadeOut(title), run_time=1.3)
 
         f1 = force_block(1, "proving ≠ authorizing", [
-            label("hardware wallets can't run a prover", size=FS_BODY, color=TXT),
+            label("hardware wallets can't run heavy proving", size=FS_BODY, color=TXT),
             label("so spends are signed, outside the proof", size=FS_BODY, color=TXT),
-            mtex('"rk" = "ak" + [alpha] thin G', size=FS_HEAD, color=GOLD),
+            eq_row(mtex('"rk" = "ak" + [alpha] thin G', size=FS_HEAD, color=GOLD),
+                   mtex('$alpha$: the randomizer', size=FS_LABEL + 2, color=TXT, math=False)),
         ])
         f2 = force_block(2, "owning ≠ receiving", [
             label("the address also carries the transmission key", size=FS_BODY, color=TXT),
@@ -218,17 +245,18 @@ class Scene11(TimedScene):
         reveal(f1[1][0], A("hardware wallets"))
         reveal(f1[1][1], A("authorization became|became a signature"))
         self.pad_to(A("re randomized|rerandomized") - 0.3)
-        self.play(Write(f1[1][2]), run_time=1.0)
+        self.play(Write(f1[1][2][0]), run_time=1.0)
         circle_out(C_AK, A("secret witness"), seed=5)
         self.pad_to(A("instance carries") - 0.2)
-        self.play(Indicate(f1[1][2], color=GOLD, scale_factor=1.08), run_time=0.8)
+        self.play(Indicate(f1[1][2][0], color=GOLD, scale_factor=1.08), run_time=0.8)
+        reveal(f1[1][2][1], A("randomizer"))
 
         # reason 2
         self.pad_to(A("second reason") - 0.3)
         self.play(FadeIn(f2[0], shift=LEFT * 0.25), f1.animate.fade(0.45),
                   *[FadeOut(c) for c in live], run_time=0.7)
         live.clear()
-        circle_out(C_ADDR, A("the address does"), seed=11)
+        circle_out(C_ADDR, A("address is actually"), seed=11)
         reveal(f2[1][0], A("carries the transmission"))
         self.pad_to(A("diversified addresses") - 0.2)
         c_div = pix_contour(crop, CROP_DIMS, C_DIVERS, seed=17, stroke_width=4.0, buff=0.1)
@@ -251,13 +279,13 @@ class Scene11(TimedScene):
         reveal(f3[1][1][1], A("viewing family"))
 
         # which keys enforce ownership? only two.
-        self.pad_to(A("look at the diagram") - 0.2)
-        self.play(FadeOut(forces, shift=UP * 0.15), *[FadeOut(c) for c in live], run_time=0.8)
-        live.clear()
         who = label("which keys enforce ownership?", size=FS_HEAD, color=STAR, weight="BOLD")
         who.move_to([COL_X, 2.3, 0])
-        self.pad_to(A("which of these") - 0.2)
-        self.play(FadeIn(who, shift=DOWN * 0.15), run_time=0.7)
+        self.pad_to(A("so which") - 0.1)
+        self.play(FadeOut(forces, shift=UP * 0.15), *[FadeOut(c) for c in live],
+                  FadeIn(who, shift=DOWN * 0.15, rate_func=squish_rate_func(smooth, 0.4, 1.0)),
+                  run_time=1.1)
+        live.clear()
         self.pad_to(A("only two") - 0.3)
         d_ak = pix_dash(crop, CROP_DIMS, C_AK, stroke_width=3.2)
         d_nk = pix_dash(crop, CROP_DIMS, C_NK, stroke_width=3.2)
@@ -277,9 +305,9 @@ class Scene11(TimedScene):
         self.play(ReplacementTransform(lift(nk, C_NK), nk), run_time=0.7)
         self.pad_to(A("derives nullifiers") - 0.1)
         self.play(FadeIn(nk_name, shift=UP * 0.1), run_time=0.5)
-        self.pad_to(A("authorization key") - 0.2)
+        self.pad_to(A("authorization key", 2) - 0.2)
         self.play(ReplacementTransform(lift(ak, C_AK), ak), run_time=0.7)
-        self.pad_to(A("authorizes spends") - 0.1)
+        self.pad_to(A("authorizes the spending") - 0.1)
         self.play(FadeIn(ak_name, shift=UP * 0.1), run_time=0.5)
 
         rest = label("everything else: transmission and viewing", size=FS_BODY, color=TXT)
@@ -292,7 +320,7 @@ class Scene11(TimedScene):
                   LaggedStart(*[ReplacementTransform(lift(k, C_OTHERS[n]), k)
                                 for (n, _, _), k in zip(OTHER_KEYS, others)], lag_ratio=0.12),
                   run_time=1.3)
-        self.pad_to(A("serves transmission") + 1.0)
+        self.pad_to(A("serving transmission") + 0.6)
         blade = make_blade()
         self.play(ShowCreation(blade), run_time=0.7, rate_func=rush_into)
         self.pad_to(scene_T(SID))
@@ -323,19 +351,32 @@ class Scene12(TimedScene):
 
         # --- the knife becomes the seam: core above, payment below -------------------
         core, pay, core_head, pay_head, core_def, pay_def, seam = bands()
-        self.pad_to(A("cuts along") - 0.2)
+        # the voice names the two concerns; each side of the blade answers in turn
+        self.pad_to(A("separates") - 0.1)
+        self.play(blade.animate.set_stroke(STAR, SW_BOLD + 1.5), rate_func=there_and_back, run_time=0.8)
+        self.pad_to(A("spend authorization") - 0.1)
+        self.play(Indicate(VGroup(ak[1], nk[1]), color=PNG_INK, scale_factor=1.15), run_time=0.8)
+        self.pad_to(A("note transmission") - 0.1)
+        self.play(LaggedStart(*[Indicate(k[1], color=PNG_INK, scale_factor=1.2) for k in others],
+                              lag_ratio=0.1), run_time=1.0)
+        # PAUSE: the blade cuts the key tangle into two boxes
+        self.pad_to(8.45)
         self.play(crop.animate.shift(LEFT * 7.5), VGroup(d_ak, d_nk).animate.shift(LEFT * 7.5),
                   FadeOut(who, shift=UP * 0.2), ReplacementTransform(blade, seam),
                   VGroup(ak, nk, ak_name, nk_name).animate.shift([-COL_X, 0.05, 0]),
                   rest.animate.move_to([0, -1.75, 0]), others.animate.move_to([0, -2.7, 0]),
-                  run_time=1.2)
+                  FadeIn(core, rate_func=squish_rate_func(smooth, 0.35, 1.0)),
+                  FadeIn(pay, rate_func=squish_rate_func(smooth, 0.35, 1.0)),
+                  run_time=1.1)
         self.remove(crop, d_ak, d_nk)
-        self.pad_to(A("on one side") - 0.2)
-        self.play(ShowCreation(core), FadeIn(core_head, shift=RIGHT * 0.2), run_time=0.8)
+        self.pad_to(A("on one side") - 0.1)
+        self.play(FadeIn(core_head, shift=RIGHT * 0.2), Indicate(core, color=STAR, scale_factor=1.0),
+                  run_time=0.8)
         self.pad_to(A("bind every") - 0.2)
         self.play(FadeIn(core_def, shift=LEFT * 0.15), run_time=0.6)
         self.pad_to(A("other side") - 0.2)
-        self.play(ShowCreation(pay), FadeIn(pay_head, shift=RIGHT * 0.2), run_time=0.8)
+        self.play(FadeIn(pay_head, shift=RIGHT * 0.2), Indicate(pay, color=STAR, scale_factor=1.0),
+                  run_time=0.8)
         self.pad_to(A("everything about") - 0.2)
         self.play(FadeIn(pay_def, shift=LEFT * 0.15), FadeOut(rest, shift=DOWN * 0.15),
                   LaggedStart(*[FadeOut(k, shift=DOWN * 0.2) for k in others], lag_ratio=0.08), run_time=0.8)
@@ -366,22 +407,28 @@ class Scene12(TimedScene):
         self.play(Write(pk_eq), run_time=0.9)
 
         # two favors of a hash commitment
-        self.pad_to(A("built from") - 0.25)
+        self.pad_to(A("instantiate") - 0.25)
         self.play(FadeOut(VGroup(ak_name, nk_name)), run_time=0.45)
         favors = bullets(["one succinct owner field", "quantum-recoverable today"], size=FS_BODY, color=STAR)
         favors.move_to([1.3, 1.35, 0], aligned_edge=UL)
         ring = contour(pk_eq, color=GOLD, buff=0.2, seed=41, stroke_width=SW)
         self.pad_to(A("succinct") - 0.3)
-        self.play(ShowCreation(ring), FadeIn(favors[0], shift=RIGHT * 0.2), run_time=0.6)
+        self.play(ShowCreation(ring), FadeIn(favors[0], shift=RIGHT * 0.2), run_time=0.5)
         self.pad_to(A("quantum") - 0.3)
-        self.play(FadeIn(favors[1], shift=RIGHT * 0.2), run_time=0.55)
+        self.play(FadeIn(favors[1], shift=RIGHT * 0.2), run_time=0.45)
+        # succinct *and* quantum-recoverable: both light together
+        self.play(Indicate(favors, color=GOLD, scale_factor=1.04), run_time=0.6)
         bare = VGroup(label("bare", size=FS_BODY, color=FLARE),
                       tex_chip('"ak"', color=FLARE, size=FS_BODY)).arrange(RIGHT, buff=0.2)
         bare.move_to([-6.2, 2.3, 0], aligned_edge=LEFT)
+        sender = itex("senders with quantum computers", size=FS_LABEL, color=FLARE)
+        sender.next_to(bare, DOWN, buff=0.25, aligned_edge=LEFT)
         risk = label("harvest now,\ndecrypt later", size=FS_BODY, color=FLARE, weight="BOLD")
-        risk.next_to(bare, DOWN, buff=0.3, aligned_edge=LEFT)
+        risk.next_to(sender, DOWN, buff=0.3, aligned_edge=LEFT)
         self.pad_to(A("handing") - 0.3)
         self.play(FadeIn(bare, shift=RIGHT * 0.15), run_time=0.55)
+        self.pad_to(A("every sender") - 0.2)
+        self.play(FadeIn(sender, shift=RIGHT * 0.1), run_time=0.55)
         self.pad_to(A("harvest") - 0.3)
         xx = strike(bare[1])
         self.play(ShowCreation(xx), FadeIn(risk, shift=UP * 0.1), run_time=0.7)
@@ -389,8 +436,8 @@ class Scene12(TimedScene):
         safe = VGroup(checkmark(0.34, GOLD), label("a hash commitment\nreveals neither key", size=FS_BODY,
                                                    color=GOLD, weight="BOLD")).arrange(RIGHT, buff=0.25)
         safe.move_to([-6.2, 0.95, 0], aligned_edge=LEFT)
-        self.play(FadeOut(VGroup(bare, xx, risk)), FadeIn(safe), Indicate(pk_eq, color=GOLD, scale_factor=1.08),
-                  run_time=0.75)
+        self.play(FadeOut(VGroup(bare, xx, risk, sender)), FadeIn(safe),
+                  Indicate(pk_eq, color=GOLD, scale_factor=1.08), run_time=0.75)
 
         # wallets define the derivation underneath; ak, nk cross the seam
         hd = VGroup(dashed_box(w=2.3, h=0.6, color=CYAN, stroke_width=2.4),
@@ -405,8 +452,9 @@ class Scene12(TimedScene):
         looks = itex("only rule: look freshly sampled", size=FS_LABEL, color=GOLD).move_to([3.6, -0.2, 0])
         self.pad_to(A("freshly sampled") - 0.3)
         self.play(FadeIn(looks, shift=UP * 0.1), Indicate(seam, color=STAR, scale_factor=1.0), run_time=0.6)
-        deriv = itex("wallet standards (ZIP-32)", size=FS_LABEL, color=CYAN).next_to(hd, RIGHT, buff=0.45)
-        self.pad_to(A("derivation paths") - 0.2)
+        deriv = itex("wallet implementation\nor a ZIP wallet standard", size=FS_LABEL, color=CYAN)
+        deriv.next_to(hd, RIGHT, buff=0.45)
+        self.pad_to(A("wallet implementation") - 0.2)
         self.play(FadeIn(deriv, shift=LEFT * 0.15), run_time=0.6)
 
         # --- security properties sort across the seam ----------------------------------------
@@ -429,8 +477,16 @@ class Scene12(TimedScene):
         finals = VGroup(*[prop_chip(t, GOLD if i < 4 else CYAN) for i, t in enumerate(texts)])
         for i in range(4):
             finals[i].move_to(loose[i])
-        finals[4].move_to([-1.9, -2.3, 0])
-        finals[5].move_to([2.6, -2.3, 0])
+        finals[4].move_to([-5.9, -2.3, 0], aligned_edge=LEFT)
+        finals[5].next_to(finals[4], RIGHT, buff=0.45)
+        # Faerie gold glyph: two incoming notes sharing one nullifier, only one spendable
+        fg_cards = VGroup(*[note_card(filled=False, color=CYAN, slot_w=0.4, slot_h=0.36) for _ in range(2)])
+        fg_cards.arrange(DOWN, buff=0.4).move_to([4.35, -2.4, 0])
+        fg_bead = bead(FLARE, r=0.13).move_to([5.95, -2.4, 0])
+        fg_links = VGroup(*[Line(c.get_right() + RIGHT * 0.06, fg_bead.get_center(), buff=0.16,
+                                 stroke_color=FLARE, stroke_width=SW_THIN) for c in fg_cards])
+        fg_x = xmark(0.32).move_to(fg_cards[1])
+        faerie = VGroup(fg_cards, fg_links, fg_bead, fg_x)
         self.pad_to(A("security properties") - 0.6)
         self.play(FadeOut(ownership, lag_ratio=0.02), run_time=0.6)
         self.play(LaggedStart(*[FadeIn(loose[i], scale=0.92) for i in (1, 0, 5, 2, 3, 4)], lag_ratio=0.1),
@@ -442,6 +498,13 @@ class Scene12(TimedScene):
         self.play(ReplacementTransform(loose[4], finals[4]), run_time=0.9)
         self.pad_to(A("resistance") - 0.2)
         self.play(ReplacementTransform(loose[5], finals[5]), run_time=0.9)
+        self.pad_to(A("pays you twice") - 0.2)
+        self.play(LaggedStart(*[FadeIn(c, shift=RIGHT * 0.3) for c in fg_cards], lag_ratio=0.45), run_time=0.8)
+        self.pad_to(A("share a nullifier") - 0.1)
+        self.play(GrowFromCenter(fg_bead), LaggedStart(*[ShowCreation(l) for l in fg_links], lag_ratio=0.2),
+                  run_time=0.7)
+        self.pad_to(A("only one") - 0.2)
+        self.play(fg_cards[1].animate.fade(0.65), ShowCreation(fg_x), run_time=0.7)
         self.pad_to(A("payment protocol's job|payment protocols job") - 0.2)
         self.play(Indicate(VGroup(finals[4], finals[5]), color=CYAN, scale_factor=1.03), run_time=0.6)
 
@@ -450,25 +513,25 @@ class Scene12(TimedScene):
         # protocol's (lower band) and rides up into a block, never parsed
         blocks = VGroup(*[block(w=1.1, h=0.66) for _ in range(8)]).arrange(RIGHT, buff=0.42).move_to([0, 0.45, 0])
         links = VGroup(*[chain_link(blocks[i], blocks[i + 1]) for i in range(7)])
-        chain_label = label("the chain: a data-availability layer", size=FS_BODY, color=GOLD).move_to([0, 1.35, 0])
+        chain_label = label("the ledger: a data-availability layer", size=FS_BODY, color=GOLD).move_to([0, 1.35, 0])
         cipher = tex_chip('mono("9f c3 07 4a 1c")', color=CYAN, size=FS_BODY).move_to([2.6, -2.25, 0])
-        cipher_tag = itex("encrypted payment data", size=FS_LABEL, color=CYAN).next_to(cipher, LEFT, buff=0.35)
-        self.pad_to(A("chain's role|chains role") - 0.3)
-        self.play(FadeOut(finals), run_time=0.5)
+        cipher_tag = itex("encrypted memo", size=FS_LABEL, color=CYAN).next_to(cipher, LEFT, buff=0.35)
+        self.pad_to(A("ledger's role|ledgers role") - 0.3)
+        self.play(FadeOut(VGroup(finals, faerie)), run_time=0.5)
         self.play(LaggedStart(*[FadeIn(b, shift=LEFT * 0.2) for b in blocks], lag_ratio=0.08),
                   LaggedStart(*[ShowCreation(l) for l in links], lag_ratio=0.08), run_time=1.0)
         self.pad_to(A("data availability") - 0.3)
         self.play(FadeIn(chain_label), run_time=0.5)
-        self.pad_to(A("encrypted payment") - 0.3)
+        self.pad_to(A("encrypted memos") - 0.3)
         self.play(FadeIn(cipher, scale=1.15), FadeIn(cipher_tag), run_time=0.6)
         landed = blocks[5].copy().set_fill(CYAN, 0.45).set_stroke(CYAN, SW, 1.0)
-        self.pad_to(A("rides") - 0.2)
+        self.pad_to(A("transmitted on chain") - 0.2)
         self.play(FadeOut(cipher_tag), run_time=0.3)
         self.play(cipher.animate.scale(0.45).move_to(blocks[5]).set_opacity(0),
                   FadeIn(landed, rate_func=squish_rate_func(smooth, 0.5, 1.0)), run_time=1.0)
         self.remove(cipher)
-        blind = label("the core carries it, never parses it", size=FS_HEAD, color=GOLD, weight="BOLD").move_to([0, 2.3, 0])
-        self.pad_to(A("carries those") - 0.3)
+        blind = label("opaque bytes, never parsed or interpreted", size=FS_HEAD, color=GOLD, weight="BOLD").move_to([0, 2.3, 0])
+        self.pad_to(A("opaque bytes") - 0.3)
         self.play(FadeIn(blind, shift=DOWN * 0.15), Indicate(landed, color=CYAN), run_time=0.7)
 
         # --- two familiar pieces don't change ---------------------------------------------------
@@ -484,25 +547,26 @@ class Scene12(TimedScene):
         self.pad_to(A("familiar") - 0.4)
         self.play(FadeOut(VGroup(blocks, links, landed, chain_label, blind)), run_time=0.5)
         self.play(FadeIn(mech_head, shift=DOWN * 0.15), run_time=0.5)
-        self.pad_to(A("spend authorization") - 0.2)
+        self.pad_to(A("spend authorization", 2) - 0.2)
         self.play(FadeIn(row1, shift=RIGHT * 0.15), run_time=0.7)
         self.pad_to(A("value balance") - 0.2)
         self.play(FadeIn(row2, shift=RIGHT * 0.15), run_time=0.7)
-        self.pad_to(A("exactly as") - 0.2)
-        same = itex("exactly as in Sapling and Orchard", size=FS_LABEL, color=MUT).next_to(body, DOWN, buff=0.22)
+        self.pad_to(A("exactly like") - 0.2)
+        same = itex("exactly like in Sapling and Orchard", size=FS_LABEL, color=MUT).next_to(body, DOWN, buff=0.22)
         self.play(FadeIn(same), run_time=0.5)
 
         # --- what the cut buys ---------------------------------------------------------------------
         core_box, core_name, stable, modules, evolve = cut_buys()
-        self.pad_to(A("so what") - 0.1)
+        self.pad_to(A("ultimately") - 0.1)
         self.play(FadeOut(VGroup(mech_head, body, same), shift=UP * 0.15), run_time=0.6)
-        self.pad_to(A("smaller surface") - 0.3)
+        self.pad_to(A("streamlined") - 0.3)
         self.play(FadeIn(core_box, scale=1.05), FadeIn(core_name, scale=1.05), run_time=0.65)
         self.pad_to(A("cleaner") - 0.3)
         self.play(FadeIn(stable, shift=UP * 0.1), run_time=0.55)
-        self.pad_to(A("two halves") - 0.35)
-        self.play(LaggedStart(*[FadeIn(m, shift=UP * 0.2) for m in modules], lag_ratio=0.25),
-                  FadeIn(evolve, shift=UP * 0.1), run_time=0.9)
+        self.pad_to(A("greater flexibility") - 0.3)
+        self.play(LaggedStart(*[FadeIn(m, shift=UP * 0.2) for m in modules], lag_ratio=0.25), run_time=0.9)
+        self.pad_to(A("evolve in parallel") - 0.3)
+        self.play(FadeIn(evolve, shift=UP * 0.1), run_time=0.6)
         self.pad_to(scene_T(SID))
 
 
@@ -519,7 +583,7 @@ class Scene13(TimedScene):
         title = scene_title("A Tachyon note")
         self.wait(0.3)
         self.play(FadeOut(VGroup(frame12, core_name), lag_ratio=0.02), run_time=0.8)
-        self.pad_to(A("here's the note|heres the note") - 0.3)
+        self.pad_to(A("four fields") - 0.3)
         self.play(ReplacementTransform(core_box, card.frame), FadeIn(card.slots, lag_ratio=0.1), Write(title),
                   run_time=1.2)
         names = ["payment key", "value", "psi", "trapdoor"]
@@ -549,11 +613,13 @@ class Scene13(TimedScene):
         self.play(FadeIn(sym, shift=UP * 0.1), run_time=0.6)
 
         # contrast: Sapling / Orchard
-        self.pad_to(A("compare") - 0.2)
+        self.pad_to(A("sapling and orchard") - 0.2)
         old = VGroup(label("Sapling / Orchard: Pedersen-style", size=FS_BODY, color=TXT),
                      mtex('"cm" = [v] G + ["rcm"] H + dots', size=FS_BODY, color=TXT)).arrange(DOWN, buff=0.22)
         old.move_to(DOWN * 2.45 + LEFT * 0.9)
-        self.play(FadeIn(old, shift=UP * 0.15), run_time=0.8)
+        self.play(FadeIn(old[0], shift=UP * 0.15), run_time=0.6)
+        self.pad_to(A("pedersen") - 0.2)
+        self.play(FadeIn(old[1], shift=UP * 0.15), run_time=0.6)
         self.pad_to(A("discrete log") - 0.2)
         dl = label("discrete log", size=FS_LABEL, color=FLARE).next_to(old, RIGHT, buff=0.5)
         self.play(FadeIn(dl), run_time=0.5)
@@ -561,36 +627,31 @@ class Scene13(TimedScene):
         rules = label("+ wallet rules on rcm", size=FS_LABEL, color=FLARE).next_to(dl, DOWN, buff=0.15).align_to(dl, LEFT)
         self.play(FadeIn(rules), run_time=0.5)
         self.pad_to(A("doesn't need|doesnt need") - 0.3)
-        self.play(VGroup(old, dl, rules).animate.fade(0.6), Indicate(sym, color=GOLD), run_time=0.8)
+        xx = strike(old[1])
+        self.play(ShowCreation(xx), VGroup(old, dl, rules).animate.fade(0.5), Indicate(sym, color=GOLD),
+                  run_time=0.8)
 
         # that leaves psi
-        self.pad_to(A("that leaves") - 0.2)
-        self.play(FadeOut(VGroup(old, dl, rules)), run_time=0.5)
         psi_slot = card.slots[2]
         hl = SurroundingRectangle(psi_slot, buff=0.06).set_stroke(GOLD, SW_BOLD)
-        self.play(ShowCreation(hl), card.texts[2].animate.set_color(GOLD), run_time=0.6)
-        self.pad_to(A("pseudo") - 0.2)
-        ident = label("pseudorandom note identity, from the wallet's master key", size=FS_LABEL, color=GOLD)
-        ident.next_to(card, UP, buff=0.3)
+        self.pad_to(A("that leaves") - 0.2)
+        self.play(FadeOut(VGroup(old, dl, rules, xx, cm, sp, sym)), ShowCreation(hl),
+                  card.texts[2].animate.set_color(GOLD), run_time=0.8)
+        self.pad_to(A("pseudorandom") - 0.2)
+        ident = label("pseudorandom note identity", size=FS_BODY, color=GOLD)
+        ident.next_to(card, UP, buff=0.35)
         self.play(FadeOut(title), FadeIn(ident, shift=DOWN * 0.1), run_time=0.7)
-        self.pad_to(A("hold on") - 0.2)
-        self.play(Indicate(card.texts[2], color=GOLD, scale_factor=1.3), run_time=0.8)
-        # every nullifier hangs off psi: faint future beads
-        self.pad_to(A("every nullifier") - 0.2)
+        # derived from the wallet's master key ...
+        mk = key_chip("wallet master key", color=GOLD, size=FS_LABEL, pad=0.18).move_to([-4.6, -0.35, 0])
+        mk_arrow = tarrow(mk, psi_slot, color=GOLD, opacity=0.6)
+        self.pad_to(A("master key") - 0.3)
+        self.play(FadeIn(mk, shift=RIGHT * 0.15), ShowCreation(mk_arrow), run_time=0.8)
+        # ... and the seed every one of the note's nullifiers grows from
+        self.pad_to(A("seed") - 0.1)
         rail = EpochRail(first=4, last=10)
         beads = VGroup(*[bead(FLARE, r=0.1).move_to(rail.center_of(e)) for e in range(4, 11)])
         threads = VGroup(*[Line(psi_slot.get_bottom(), b.get_center(), stroke_color=FLARE,
                                 stroke_width=SW_THIN, stroke_opacity=0.45) for b in beads])
-        self.play(FadeOut(VGroup(sym, sp)), cm.animate.set_opacity(0), FadeIn(rail),
-                  LaggedStart(*[ShowCreation(t) for t in threads], lag_ratio=0.08),
-                  LaggedStart(*[FadeIn(b, scale=0.4) for b in beads], lag_ratio=0.08), run_time=1.4)
-
-        # so where does cm go?
-        self.pad_to(A("note exists") - 0.2)
-        self.play(FadeOut(VGroup(threads, beads, rail, ident, hl)), card.texts[2].animate.set_color(STAR),
-                  cm.animate.set_opacity(1).move_to(ORIGIN), run_time=0.8)
-        self.pad_to(A("where does") - 0.2)
-        q = label("where does it go?", size=FS_HEAD, color=STAR).next_to(cm, DOWN, buff=0.45)
-        self.play(FadeOut(card, shift=UP * 0.2), FadeIn(q, shift=UP * 0.1),
-                  Indicate(cm, color=GOLD), run_time=1.0)
+        self.play(FadeIn(rail), LaggedStart(*[ShowCreation(t) for t in threads], lag_ratio=0.08),
+                  LaggedStart(*[FadeIn(b, scale=0.4) for b in beads], lag_ratio=0.08), run_time=1.5)
         self.pad_to(scene_T(SID))

@@ -58,3 +58,11 @@ the binding ceiling.
 Now the estimation above is first-order and too long, our presentation should never be
 as pedantic and dull. We should highlight the conclusion with convincingly enough details,
 you will be the judge.
+
+Correction (2026-10-08, from the slides): the size estimate above leaves out the four 64 B
+action signatures, the binding signature, and the pointer stamp per 2-in-2-out transaction,
+which puts a transaction nearer 1.15 KB than 768 B. That drops the ceilings to roughly
+(2MB - 7.4KB) / 1.15KB ~= 1,733 tx per block (~70 TPS) at 2 MB and ~17.4K tx (~700 TPS) at
+20 MB. The latency budget is also revised: reserving 4 sec leaves 21 sec = 17 steps,
+1 lift + 16 merge levels, 2^16 = 65,536 stamps (~2.6K TPS). 17.4K still needs only
+1 + 15 = 16 steps = 19.2 sec, so size is the binding ceiling by an even wider margin.

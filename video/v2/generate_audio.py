@@ -5,8 +5,11 @@ Each voice has its own settings, respellings and output directory, so voices nev
 overwrite each other's takes:
   brian -> audio/raw/scene-X.Y.mp3, audio/final/scene-X.Y.mp3          (the v1 stock voice)
   sean  -> audio/sean/raw/scene-X.Y.mp3, audio/sean/final/scene-X.Y.mp3  (Sean's clone)
+  sts   -> audio/sts/raw/scene-X.Y.mp3, audio/sts/final/scene-X.Y.mp3    (Brian, Sean's delivery)
 Raw is one clip per scene (a retake costs one scene); final adds the voice's speed factor,
-any sentence-gap lengthening, and a 1 s lead-in pad.
+any sentence-gap lengthening, and a 1 s lead-in pad. Voices with character timings also
+write <dir>/words.json: word start/end times in the final clip, spelled as in NARRATION.md,
+for the animation anchors (scenes/style.py).
 
     .venv/bin/python generate_audio.py --voice sean 2.1 2.2 2.3   # some scenes
     .venv/bin/python generate_audio.py --voice sean               # all scenes
@@ -68,6 +71,29 @@ VOICES = {
         "pause_mode": "silence",
         "pause": 0.6,       # added on top of the model's own gap there
         "held_pause": 1.0,  # replaces sentence_gap_add where both fall on the same gap
+    },
+    "sts": {
+        # Brian (the v1 stock voice) with Sean's delivery as far as settings carry it
+        # (Alex, 2026-10-08). eleven_v3 rises and falls like Sean's own read converted into
+        # Brian (pitch spread 4.1 st for both; Brian on v2 with the Sean clone converted came
+        # out flatter at 3.4 st), but it reads slowly, so the take is sped up to Sean's
+        # in-sentence pace afterwards. Per-scene speech-to-speech from the Sean clone would
+        # cost ~1,000 credits per minute on top of the TTS, more than the budget held.
+        "voice_id": "nPczCjzI2devNBz1zQrb",
+        "model": "eleven_v3",
+        "context": False,  # v3 takes no previous_text/next_text
+        "settings": {"stability": 0.5, "similarity_boost": 0.85, "style": 0.0,
+                     "use_speaker_boost": True},  # v3 stability is 0, 0.5 or 1
+        "speed": 1.3,  # v3 reads ~30% slower than Sean (~195 wpm in-sentence on the chapter 0 read)
+        "sentence_gap_median": 0.79,  # Sean's median sentence-end gap, after the speed-up
+        "dir": "audio/sts",
+        # Closest to Sean's clips (audio/samples/pron/sean_*.wav) by log-mel DTW over Brian v3
+        # candidates in audio/samples/pron/brian_v3/; confirm by ear.
+        "respell": {"tachyon": "Tak-ee-on", "tachygram": "Tak-ee-gram", "psi": "psy",
+                    "ragu": "Ra-goo", "prover": "proover"},
+        "pause_mode": "silence",
+        "pause": 0.6,
+        "held_pause": 1.0,
     },
 }
 
@@ -199,11 +225,17 @@ def insert_silences(raw: str, body: str, voice: dict) -> str:
                                      capture_output=True, check=True).stdout, np.float32)
     al = alignment(raw, body, voice)
     want = {}  # gap (t0, t1) -> seconds of silence to insert there
-    for gap in sentence_gaps(al):
-        want[gap] = voice.get("sentence_gap_add", 0.0)
+    gaps = sentence_gaps(al)
+    add = voice.get("sentence_gap_add", 0.0)
+    if "sentence_gap_median" in voice and gaps:
+        # Lift this take's median sentence-end gap to the target, keeping its variation.
+        target = voice["sentence_gap_median"] * voice["speed"]  # in the take's own time
+        add = max(0.0, target - float(np.median([b - a for a, b in gaps])))
+    for gap in gaps:
+        want[gap] = add
     _, pauses = split(body, voice)
-    for idx, sec in pauses:
-        want[gap_around(al, idx)] = sec
+    for idx, sec in pauses:  # pause lengths are meant after the speed-up
+        want[gap_around(al, idx)] = sec * voice["speed"]
     cuts = []
     for (t0, t1), sec in sorted(want.items()):
         if sec <= 0:
@@ -223,14 +255,46 @@ def insert_silences(raw: str, body: str, voice: dict) -> str:
     out = raw.replace(".mp3", ".paced.wav")
     subprocess.run([FFMPEG, "-loglevel", "error", "-y", "-f", "f32le", "-ar", str(sr), "-ac", "1",
                     "-i", "-", out], input=np.concatenate(parts).tobytes(), check=True)
+    return out, [(at / sr, sec) for at, sec in cuts]
+
+
+def words(al: dict, voice: dict, cuts: list[tuple[float, float]]) -> list[dict]:
+    """Words of the spoken text with start/end times in the final clip. A respelled word
+    is written back in the script's spelling (only its normalized form matters to the
+    anchors, so "Rag-oo's" comes back as "Ragus")."""
+    back = {_norm(rep): word for word, rep in voice["respell"].items()}
+    chars, starts, ends = al["chars"], al["starts"], al["ends"]
+    # A silence inserted exactly at a word's end (a pause closing the scene) comes after it.
+    shift = lambda t, end=False: (t + sum(sec for at, sec in cuts if (at < t if end else at <= t))
+                                  ) / voice["speed"] + 1.0
+    out = []
+    for m in re.finditer(r"\S+", "".join(chars)):
+        w, n = m.group(), _norm(m.group())
+        for rep, word in back.items():
+            if n in (rep, rep + "s"):
+                w = word.capitalize() + n[len(rep):] if m.group()[0].isupper() else word + n[len(rep):]
+        out.append({"w": w, "s": round(shift(starts[m.start()]), 3),
+                    "e": round(shift(ends[m.end() - 1], end=True), 3)})
     return out
+
+
+def _norm(w: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", w.lower())
+
+
+def save_words(voice: dict, sid: str, ws: list[dict]) -> None:
+    path = f"{HERE}/{voice['dir']}/words.json"
+    data = json.load(open(path)) if os.path.exists(path) else {}
+    data[sid] = ws
+    json.dump(dict(sorted(data.items(), key=lambda kv: [int(x) for x in kv[0].split(".")])),
+              open(path, "w"), indent=0)
 
 
 def finalize(voice: dict, sid: str, body: str) -> None:
     raw, out = paths(voice, sid)
-    src = raw
+    src, cuts = raw, []
     if voice.get("sentence_gap_add") or voice["pause_mode"] == "silence":
-        src = insert_silences(raw, body, voice)
+        src, cuts = insert_silences(raw, body, voice)
     tempo = f"atempo={voice['speed']}," if voice["speed"] != 1.0 else ""
     subprocess.run(
         [FFMPEG, "-y", "-loglevel", "error", "-i", src,
@@ -239,6 +303,8 @@ def finalize(voice: dict, sid: str, body: str) -> None:
     )
     if src != raw:
         os.remove(src)
+    if os.path.exists(raw.replace(".mp3", ".align.json")):
+        save_words(voice, sid, words(alignment(raw, body, voice), voice, cuts))
 
 
 def main() -> None:
@@ -278,11 +344,11 @@ def main() -> None:
         r = client.text_to_speech.convert_with_timestamps(
             voice_id=voice["voice_id"],
             text=text,
-            model_id=MODEL_ID,
+            model_id=voice.get("model", MODEL_ID),
             output_format="mp3_44100_128",
             voice_settings=voice["settings"],
-            previous_text=prev_tail,
-            next_text=next_head,
+            **({"previous_text": prev_tail, "next_text": next_head}
+               if voice.get("context", True) else {}),
         )
         raw = paths(voice, sid)[0]
         with open(raw, "wb") as f:

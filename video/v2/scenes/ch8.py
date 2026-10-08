@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from style import *  # noqa: E402,F403
-from style import _esc_typst  # noqa: E402
+from style import _esc_typst, _norm  # noqa: E402
 
 
 # ---- baseline-true text (local; proposed for style.py) -----------------------
@@ -97,15 +97,80 @@ def title_pair(size=FS_TITLE):
     return p
 
 
-def tbd_card():
-    """8.1's closing card (also 8.2's opening frame): the lattice slot, still open."""
-    tbd = at_y(tl("to be determined", size=56, color=STAR, bold=True), 0.38)
-    tbd.set_x(0)
-    sub = at_y(tl("by design, not blocked", size=FS_BODY, color=GOLD), -0.5)
-    sub.set_x(0)
-    box = panel(tbd.get_width() + 1.6, 2.3, color=CYAN, fill_opacity=0.05)
-    box.move_to([0, -0.04, 0])
-    return box, tbd, sub
+LX0 = -6.6      # 8.1 upgrade stage: left column edge
+RX0 = 0.6       # ... right column (second swap) left edge
+BW, BX = 4.0, RX0 + 2.0
+
+
+def swap_head1():
+    """'first swap: authorization', centred (8.1 later aligns it to LX0)."""
+    h = at_y(tl("first swap: authorization", size=FS_HEAD, color=GOLD, bold=True), 2.3)
+    return h.set_x(0)
+
+
+def swap2_parts():
+    """Every mobject of 8.1's second-swap frame, at its final position.
+    Shared by 8.1 (which animates them in) and 8.2 (which opens on them)."""
+    P = {}
+    P["summary1"] = bullets([tl("prove a PQ signature in circuit"),
+                             tl("it folds into the PCD proof"),
+                             row([('$"rk"$', TXT), ("leaves the action", TXT)], buff=0.12)],
+                            mark_color=GOLD, buff=0.5)
+    P["summary1"].move_to([0, -0.3, 0]).align_to([LX0, 0, 0], LEFT)
+    P["head2"] = at_y(tl("second swap: the proof system", size=FS_HEAD, color=CYAN,
+                         bold=True), 2.3).align_to([RX0, 0, 0], LEFT)
+    P["divider"] = Line([0.15, 2.6, 0], [0.15, -2.6, 0], stroke_width=SW_THIN,
+                        stroke_color=DIM)
+    P["top_blk"] = panel(BW, 0.95, color=STAR, fill_opacity=0.05).move_to([BX, 1.05, 0])
+    P["top_l"] = tl("recursive folding", size=FS_LABEL, color=STAR).move_to(P["top_blk"])
+    lat_blk = panel(BW, 0.95, color=CYAN, fill_opacity=0.05)
+    lat_l = tl("lattice commitments", size=FS_LABEL, color=CYAN)
+    lat_l.move_to(lat_blk)
+    P["lat_blk"], P["lat_l"] = lat_blk, lat_l
+    P["lat"] = VGroup(lat_blk, lat_l).move_to([BX, -0.2, 0])
+    P["surv"] = status("survives", P["top_blk"].get_y(), P["top_blk"].get_right()[0] + 0.25)
+    P["chg"] = tl("the hardness assumption changes", size=FS_LABEL)
+    P["chg"].next_to(P["lat"], DOWN, buff=0.42).align_to(P["lat"], LEFT)
+    P["research"] = key_chip("concrete constructions: active research", color=MUT,
+                             size=FS_SMALL)
+    P["research"].next_to(P["chg"], DOWN, buff=0.36).align_to(P["lat"], LEFT)
+    return P
+
+
+def final81():
+    """8.1's last frame, rebuilt for 8.2's opening (pixel-identical seam)."""
+    P = swap2_parts()
+    head1 = swap_head1().align_to([LX0, 0, 0], LEFT)
+    return VGroup(title_at("two coordinated swaps"), head1, P["summary1"], P["divider"],
+                  P["head2"], P["top_blk"], P["top_l"], P["lat"], P["surv"], P["chg"],
+                  P["research"]), P
+
+
+def word_end(sid, word, occ=1):
+    """End time of the occ-th spoken word matching `word` (held pauses start there)."""
+    target, hits = _norm(word), 0
+    for x in WORDS[sid]:
+        if _norm(x["w"]) == target:
+            hits += 1
+            if hits == occ:
+                return x["e"]
+    raise ValueError(f"word not found in {sid}: {word!r}")
+
+
+def journey(rail):
+    """Our note's whole life on the epoch rail: birth bead (5), delegated ratchet
+    (6-8), per-epoch evidence roots, and the spend proof (9)."""
+    dy = 0.4
+    birth = bead(GOLD, r=0.12).move_to(rail.center_of(5, dy))
+    ratchet = VGroup(*[bead(CYAN, r=0.1).move_to(rail.center_of(e, dy)) for e in (6, 7, 8)])
+    spend = proof_token(0.12).move_to(rail.center_of(9, dy))
+    stops = [birth, *ratchet, spend]
+    hops = VGroup(*[Line(a.get_center(), b.get_center(), buff=0.16,
+                         stroke_color=GOLD if i == 0 else CYAN, stroke_width=SW_THIN)
+                    for i, (a, b) in enumerate(zip(stops[:-1], stops[1:]))])
+    roots = VGroup(*[Square(0.13).rotate(PI / 4).set_fill(STAR, 0.9).set_stroke(width=0)
+                     .move_to(rail.center_of(e)) for e in (5, 6, 7, 8)])
+    return VGroup(roots, hops, birth, ratchet, spend)
 
 
 def breathe(mob, amp=0.012, speed=0.9):
@@ -138,10 +203,11 @@ class Scene81(TimedScene):
     def construct(self):
         SID = "8.1"
         A = lambda p, o=1: anchor(SID, p, o)  # noqa: E731
+        anchor_end = lambda w, o=1: word_end(SID, w, o)  # noqa: E731
 
         # ---- the stance ------------------------------------------------------
         title1 = title_at("the quantum question")
-        self.pad_to(A("quantum one") - 0.5)
+        self.pad_to(A("quantum question") - 0.5)
         self.play(FadeIn(title1, shift=UP * 0.2), run_time=0.8)
 
         # the thesis lands big on stage, half by half, on its words ...
@@ -286,21 +352,21 @@ class Scene81(TimedScene):
         self.pad_to(A("nullifiers") - 0.2)
         self.play(bar.animate.move_to(row_bar(1)), run_time=0.5)
         a1, v1 = asm("PRF", 1), verdict("post-quantum", 1)
-        self.pad_to(A("prf outputs") - 0.2)
+        self.pad_to(A("p r f outputs") - 0.2)
         self.play(FadeIn(a1), FadeIn(v1, shift=RIGHT * 0.15), run_time=0.6)
         self.pad_to(A("memos") - 0.2)
         self.play(bar.animate.move_to(row_bar(2)), run_time=0.5)
         a2, v2 = asm("ML-KEM + symmetric", 2), verdict("post-quantum", 2)
-        self.pad_to(A("ml chem|ml kem") - 0.1)
+        self.pad_to(A("m l kem") - 0.1)
         self.play(FadeIn(a2), FadeIn(v2, shift=RIGHT * 0.15), run_time=0.6)
-        self.pad_to(A("quantum safe already") - 0.3)
+        self.pad_to(A("already quantum safe") - 0.3)
         self.play(FadeOut(bar),
                   *[Indicate(v, color=GOLD, scale_factor=1.12) for v in (v0, v1, v2)],
                   run_time=0.9)
 
-        # "the discrete-log survivors are three"
+        # "three things that still rest on discrete log"
         dl = VGroup(*[asm("discrete log", i, AMBER) for i in (3, 4, 5)])
-        self.pad_to(A("survivors") - 0.5)
+        self.pad_to(A("rest on discrete log") - 0.3)
         self.play(LaggedStart(*[FadeIn(m, shift=RIGHT * 0.15) for m in dl],
                               lag_ratio=0.15),
                   *[chips[i].animate.set_color(AMBER) for i in (3, 4, 5)],
@@ -329,33 +395,63 @@ class Scene81(TimedScene):
                   bar.animate.move_to(row_bar(4)), run_time=0.9)
         self.play(FadeIn(rk_eq, shift=LEFT * 0.2), run_time=0.6)
         askalpha = mtex('"ask" + alpha', size=FS_HEAD + 6, color=STAR)
-        askalpha.move_to([EXPL_X, 0.45, 0])
+        askalpha.move_to([EXPL_X, 0.6, 0])
         dlog = tarrow(rk_eq, askalpha, color=FLARE, width=SW, buff=0.14)
         dlog_l = tl("quantum DLog", size=FS_SMALL, color=FLARE)
         dlog_l.next_to(dlog, RIGHT, buff=0.18)
-        self.pad_to(A("takes its discrete log") - 0.2)
+        self.pad_to(A("take its discrete log") - 0.2)
         self.play(GrowFromPoint(dlog, dlog[0].get_start()), FadeIn(dlog_l), run_time=0.7)
-        self.pad_to(A("sk plus alpha|ask plus alpha") - 0.2)
-        self.play(TransformFromCopy(rk_eq[4:9], askalpha), run_time=0.9)
+        # "recover a-s-k, which is the secret key behind a-k, plus alpha"
+        ask_part, plus_part = askalpha[0:3], askalpha[3:]
+        self.pad_to(A("a s k") - 0.1)
+        self.play(TransformFromCopy(rk_eq[4:7], ask_part), run_time=0.8)
+        gloss = row([("secret key behind", MUT), ('$"ak"$', MUT)], size=FS_SMALL, buff=0.12)
+        gloss.set_x(EXPL_X)
+        at_y(gloss, askalpha.get_bottom()[1] - 0.32)
+        self.pad_to(A("secret key behind") - 0.2)
+        self.play(FadeIn(gloss, shift=UP * 0.1), run_time=0.6)
+        self.pad_to(A("plus alpha") - 0.1)
+        self.play(TransformFromCopy(rk_eq[7:9], plus_part), run_time=0.7)
+        self.remove(ask_part, plus_part)
+        self.add(askalpha)
         mask = row([("$alpha =$", AMBER), ("a fresh PRF mask", TXT)], size=FS_LABEL,
                    buff=0.14)
         mask.set_x(EXPL_X)
-        at_y(mask, askalpha.get_bottom()[1] - 0.42)
+        at_y(mask, gloss.get_bottom()[1] - 0.36)
         self.pad_to(A("alpha is") - 0.3)
         self.play(FadeIn(mask, shift=UP * 0.12), run_time=0.7)
 
         ident = key_chip("your identity", color=GOLD, size=FS_LABEL)
-        ident.move_to([EXPL_X, -2.05, 0])
-        dash = DashedLine(mask.get_bottom() + DOWN * 0.12, ident.get_top() + UP * 0.08,
+        ident.move_to([EXPL_X, -2.2, 0])
+        dash = DashedLine(mask.get_bottom() + DOWN * 0.1, ident.get_top() + UP * 0.08,
                           stroke_color=MUT, stroke_width=SW_THIN)
         self.pad_to(A("random looking") - 0.3)
         self.play(FadeIn(ident), ShowCreation(dash), run_time=0.8)
-        bx = broken_x(dash.get_center())
-        v4 = verdict("links to nothing", 4)
-        self.pad_to(A("linkable to nothing") - 0.2)
-        self.play(ShowCreation(bx), FadeIn(v4, shift=RIGHT * 0.15), run_time=0.7)
 
-        # verdict: forgery — theft, not exposure — the half that can wait
+        # held pause, "the quantum lens: alpha pixelates the link": the link
+        # dissolves into alpha-coloured pixels that scatter, leaving a break
+        p0, p1 = dash.get_start(), dash.get_end()
+        npx = 9
+        pix = VGroup(*[
+            Square(0.085).set_fill(AMBER, 0.95).set_stroke(width=0)
+            .move_to(p0 + (p1 - p0) * (k + 0.5) / npx)
+            for k in range(npx)])
+        rng = np.random.default_rng(81)
+        scatter = [pix[k].copy().shift(np.array([rng.uniform(-0.45, 0.45),
+                                                 rng.uniform(-0.12, 0.12), 0]))
+                   .set_fill(opacity=0) for k in range(npx)]
+        bx = broken_x((p0 + p1) / 2)
+        v4 = verdict("links to nothing", 4)
+        self.pad_to(A("link to anything") - 0.2)
+        self.play(FadeOut(dash), LaggedStart(*[FadeIn(q, scale=0.5) for q in pix],
+                                             lag_ratio=0.1), run_time=0.6)
+        self.pad_to(anchor_end("anything", 2) + 0.05)          # pause starts
+        self.play(LaggedStart(*[Transform(q, sc) for q, sc in zip(pix, scatter)],
+                              lag_ratio=0.06), run_time=0.7)
+        self.remove(pix)
+        self.play(ShowCreation(bx), FadeIn(v4, shift=RIGHT * 0.15), run_time=0.45)
+
+        # verdict: forgery, the half that can wait for the upgrade
         v5 = verdict("forgery possible", 5, color=FLARE, mark=False)
         head = [("quantum power today", TXT), ("$=>$", MUT), ("forgery", FLARE, True)]
         vl = row(head)
@@ -364,25 +460,16 @@ class Scene81(TimedScene):
         self.pad_to(A("is forgery") - 0.4)
         self.play(bar.animate.move_to(row_bar(5)), FadeIn(v5, shift=RIGHT * 0.15),
                   FadeIn(vl, shift=UP * 0.15), run_time=0.8)
-        full = row(head + [("—", MUT), ("theft, not exposure", TXT)])
-        full.set_x(0)
-        at_y(full, CAPTION_Y)
-        self.pad_to(A("theft") - 0.1)
-        self.play(*[m.animate.move_to(f) for m, f in zip(vl, full[:3])],
-                  FadeIn(full[3:], shift=LEFT * 0.15), run_time=0.6)
         full2 = row(head + [("—", MUT), ("the half that can wait", CYAN)])
         full2.set_x(0)
         at_y(full2, CAPTION_Y)
-        self.pad_to(A("allowed to wait") - 0.4)
+        self.pad_to(A("the half that can wait") - 0.3)
         self.play(*[m.animate.move_to(f) for m, f in zip(vl, full2[:3])],
-                  full[3].animate.move_to(full2[3]),
-                  FadeOut(full[4], shift=UP * 0.15),
-                  FadeIn(full2[4], shift=UP * 0.15),
-                  run_time=0.8)
+                  FadeIn(full2[3:], shift=LEFT * 0.15), run_time=0.7)
 
         # ---- the upgrade: two swaps -------------------------------------------
-        audit = VGroup(*table, bar, v4, v5, rk_eq, dlog, dlog_l, askalpha, mask, ident,
-                       dash, bx, vl, full[3], full2[4])
+        audit = VGroup(*table, bar, v4, v5, rk_eq, dlog, dlog_l, askalpha, gloss, mask,
+                       ident, bx, vl, full2[3], full2[4])
         up_title = title_at("two coordinated swaps")
         self.pad_to(A("upgrade comes") - 0.3)
         clear_shimmer([c[0] for c in chips])
@@ -394,11 +481,8 @@ class Scene81(TimedScene):
         # swap 1: authorization. Centred while it is the only thing on stage;
         # slides into the left column when the PCD proof needs the right one.
         SX = 3.3
-        LX0 = -6.6
-        head1 = at_y(tl("first swap: authorization", size=FS_HEAD, color=GOLD,
-                        bold=True), 2.3)
-        head1.set_x(0)
-        self.pad_to(A("first authorization") - 0.2)
+        head1 = swap_head1()
+        self.pad_to(A("first one is authorization") - 0.2)
         self.play(FadeIn(head1, shift=UP * 0.2), run_time=0.7)
 
         pq_sig = pill("post-quantum signature", color=CYAN)
@@ -427,7 +511,7 @@ class Scene81(TimedScene):
         self.play(ShowCreation(circuit), FadeIn(circ_h), run_time=0.8)
         stmt = tl("prove: I know a valid post-quantum signature", size=FS_LABEL)
         stmt.move_to(circuit.get_center() + UP * 0.02)
-        self.pad_to(A("prove in circuit") - 0.2)
+        self.pad_to(A("proving in circuit") - 0.2)
         self.play(FadeIn(stmt), run_time=0.7)
         capss = key_chip("CAPSS: cheap exactly there", color=CYAN, size=FS_SMALL)
         capss.move_to(circuit.get_bottom() + UP * 0.42)
@@ -487,27 +571,16 @@ class Scene81(TimedScene):
         # swap 2: the proof system — left column keeps a summary of swap 1
         swap1 = VGroup(*swap1_left, token, token_l, action, action_l, cv_chip, note,
                        solid, constraint_l)
-        RX0 = 0.6
-        summary1 = bullets([tl("prove a PQ signature in circuit"),
-                            tl("it folds into the PCD proof"),
-                            row([('$"rk"$', TXT), ("leaves the action", TXT)], buff=0.12)],
-                           mark_color=GOLD, buff=0.5)
-        summary1.move_to([0, -0.3, 0]).align_to([LX0, 0, 0], LEFT)
-        head2 = at_y(tl("second swap: the proof system", size=FS_HEAD, color=CYAN,
-                        bold=True), 2.3)
-        head2.align_to([RX0, 0, 0], LEFT)
-        divider = Line([0.15, 2.6, 0], [0.15, -2.6, 0], stroke_width=SW_THIN,
-                       stroke_color=DIM)
-        self.pad_to(A("second the proof system") - 0.2)
+        P = swap2_parts()
+        summary1, head2, divider = P["summary1"], P["head2"], P["divider"]
+        self.pad_to(A("second swap") - 0.2)
         clear_shimmer([circuit, action])
         self.play(FadeOut(swap1), run_time=0.5)
         self.play(LaggedStart(*[FadeIn(r, shift=UP * 0.1) for r in summary1],
                               lag_ratio=0.2),
                   ShowCreation(divider), FadeIn(head2, shift=UP * 0.2), run_time=1.0)
 
-        BW, BX = 4.0, RX0 + 2.0
-        top_blk = panel(BW, 0.95, color=STAR, fill_opacity=0.05).move_to([BX, 1.05, 0])
-        top_l = tl("recursive folding", size=FS_LABEL, color=STAR).move_to(top_blk)
+        top_blk, top_l = P["top_blk"], P["top_l"]
         dl_blk = panel(BW, 0.95, color=AMBER, fill_opacity=0.05).move_to([BX, -0.2, 0])
         dl_l = tl("discrete-log commitments", size=FS_LABEL, color=AMBER)
         dl_l.move_to(dl_blk)
@@ -516,41 +589,21 @@ class Scene81(TimedScene):
         self.play(LaggedStart(FadeIn(VGroup(top_blk, top_l), shift=UP * 0.2),
                               FadeIn(VGroup(dl_blk, dl_l), shift=UP * 0.2),
                               lag_ratio=0.3), run_time=1.0)
-        lat_blk = panel(BW, 0.95, color=CYAN, fill_opacity=0.05)
-        add_shimmer([lat_blk], amp=0.18, speed=1.2)
-        lat_l = tl("lattice commitments", size=FS_LABEL, color=CYAN)
-        lat = VGroup(lat_blk, lat_l)
-        lat_l.move_to(lat_blk)
-        lat.move_to([BX, -0.2, 0])
+        lat = P["lat"]
+        add_shimmer([P["lat_blk"]], amp=0.18, speed=1.2)
         self.pad_to(A("lattice based folding") - 0.5)
         clear_shimmer([dl_blk])
         self.play(LaggedStart(
             FadeOut(VGroup(dl_blk, dl_l), shift=DOWN * 0.7),
             FadeIn(lat, shift=LEFT * 3.0),
             lag_ratio=0.45), run_time=1.4)
-        surv = status("survives", top_blk.get_y(), top_blk.get_right()[0] + 0.25)
         self.pad_to(A("recursive structure") - 0.2)
-        self.play(FadeIn(surv, shift=LEFT * 0.15), run_time=0.7)
-        chg = tl("the hardness assumption changes", size=FS_LABEL)
-        chg.next_to(lat, DOWN, buff=0.42).align_to(lat, LEFT)
+        self.play(FadeIn(P["surv"], shift=LEFT * 0.15), run_time=0.7)
         self.pad_to(A("hardness assumption") - 0.2)
-        self.play(FadeIn(chg, shift=UP * 0.1), run_time=0.7)
-        research = key_chip("concrete constructions: active research", color=MUT,
-                            size=FS_SMALL)
-        research.next_to(chg, DOWN, buff=0.36).align_to(lat, LEFT)
+        self.play(FadeIn(P["chg"], shift=UP * 0.1), run_time=0.7)
+        # the last fact: concrete constructions are still active research
         self.pad_to(A("active research") - 0.3)
-        self.play(FadeIn(research, shift=UP * 0.1), run_time=0.7)
-
-        # "the honest status: to be determined — by design, not blocked":
-        # the lattice slot itself grows into the closing card
-        box, tbd, tbd_sub = tbd_card()
-        self.pad_to(A("to be determined") - 0.5)
-        clear_shimmer([top_blk])
-        self.play(FadeOut(VGroup(head1, summary1, divider, head2, top_blk, top_l,
-                                 surv, chg, research), run_time=0.6),
-                  Transform(lat_blk, box), FadeTransform(lat_l, tbd), run_time=1.1)
-        self.pad_to(A("by design") - 0.2)
-        self.play(FadeIn(tbd_sub, shift=UP * 0.12), run_time=0.6)
+        self.play(FadeIn(P["research"], shift=UP * 0.1), run_time=0.7)
         self.pad_to(scene_T(SID))
 
 
@@ -569,18 +622,30 @@ class Scene82(TimedScene):
         A = lambda p, o=1: anchor(SID, p, o)  # noqa: E731
 
         # Reconstruct 8.1's final frame so the act reads as one continuous thought.
-        h_title = title_at("two coordinated swaps")
-        h_box, h_tbd, h_sub = tbd_card()
-        add_shimmer([h_box], amp=0.18, speed=1.2)
-        self.add(h_title, h_box, h_tbd, h_sub)
+        last81, P81 = final81()
+        h_title = last81[0]
+        panels81 = [P81["top_blk"], P81["lat_blk"]]
+        add_shimmer(panels81, amp=0.18, speed=1.2)
+        self.add(last81)
+
+        # held pause (before the first word): the camera pulls back over the note's
+        # whole journey on the epoch rail. Drawn as the rail + journey shrinking from
+        # a close-up (a pull-back) so the title band is not dragged with it.
+        rail = EpochRail(first=4, last=10)
+        trip = journey(rail)
+        story = VGroup(rail, trip)
+        focus = rail.center_of(7)
+        story.scale(2.6, about_point=focus).shift(UP * 3.2)
+        self.wait(0.15)
+        clear_shimmer(panels81)
+        self.play(LaggedStart(FadeOut(VGroup(*last81[1:]), shift=DOWN * 0.2),
+                              FadeIn(story), lag_ratio=0.4),
+                  FadeOut(h_title, shift=UP * 0.3), run_time=0.6)
+        story.generate_target()
+        story.target.shift(DOWN * 3.2).scale(1 / 2.6, about_point=focus)
+        self.play(MoveToTarget(story), run_time=1.1, rate_func=smooth)
 
         title = title_at("the decision cascade")
-        self.wait(0.6)
-        clear_shimmer([h_box])
-        self.play(FadeOut(VGroup(h_box, h_tbd, h_sub), shift=UP * 0.25),
-                  LaggedStart(FadeOut(h_title, shift=UP * 0.3),
-                              FadeIn(title, shift=UP * 0.3), lag_ratio=0.6),
-                  run_time=1.0)
 
         specs = [
             ("the nullifier set can't be pruned", [("validation moves to the client", GOLD)]),
@@ -624,8 +689,9 @@ class Scene82(TimedScene):
             skel.append(FadeIn(arrows[i][1]))
             if i < 6:
                 skel.append(ShowCreation(links[i]))
-        self.pad_to(A("compresses") - 0.6)
-        self.play(LaggedStart(*skel, lag_ratio=0.12), run_time=2.0)
+        self.pad_to(A("if we run") - 0.1)
+        self.play(FadeIn(title, shift=UP * 0.3, run_time=0.7),
+                  LaggedStart(*skel, lag_ratio=0.12, run_time=1.4))
 
         def lit(i):
             return [arrows[i][0].animate.set_stroke(opacity=1.0),
@@ -656,21 +722,23 @@ class Scene82(TimedScene):
         reveal_effect(3, A("so actions carry"), part=0)
         reveal_effect(3, A("consensus keeps"), part=1, lead=0.1)
         reveal_cause(4, A("history needed") - 0.7)
-        reveal_effect(4, A("so one accumulator"))
+        reveal_effect(4, A("so we got one accumulator"))
         reveal_cause(5, A("its degree"))
         reveal_effect(5, A("so quadratic"))
         reveal_cause(6, A("none of it"))
         reveal_effect(6, A("so the expensive"))
         self.pad_to(A("shared by everyone") - 0.2)
-        self.play(Indicate(effects[6], color=GOLD, scale_factor=1.06), run_time=0.8)
+        self.play(Indicate(effects[6], color=GOLD, scale_factor=1.06), run_time=0.7)
 
-        # "each decision is forced by the one before it" — a pulse down the chain
+        # held pause, "chapter cards reconnect into one chain": a pulse runs down
+        # every arrow and hand-off, top to bottom, and carries on under "each
+        # decision is forced by the one before it"
         path = []
         for i in range(7):
             path.append(arrows[i][0])
             if i < 6:
                 path.append(links[i])
-        self.pad_to(A("each decision") - 0.2)
+        self.pad_to(word_end(SID, "everyone") + 0.03)
         self.play(LaggedStart(*[
             ShowPassingFlash(m.copy().set_stroke(GOLD, 6, 1.0), time_width=0.7)
             for m in path], lag_ratio=0.25), run_time=2.4)
@@ -682,7 +750,8 @@ class Scene82(TimedScene):
         at_y(principle, CAPTION_Y)
         proves, checks = principle[0], principle[2]
         self.pad_to(A("one principle") - 0.3)
-        self.play(FadeIn(principle, shift=UP * 0.2), run_time=0.7)
+        self.play(FadeOut(story, shift=DOWN * 0.3), FadeIn(principle, shift=UP * 0.2),
+                  run_time=0.7)
         self.pad_to(A("client proves") - 0.1)
         self.play(Indicate(proves, color=GOLD, scale_factor=1.06), run_time=0.5)
         self.pad_to(A("consensus checks") - 0.05)
@@ -704,11 +773,17 @@ class Scene82(TimedScene):
         breathe(logo)
 
         link1 = url_label("https://tachyon.z.cash", FS_HEAD + 6, GOLD)
-        link1.move_to(DOWN * 0.15)
+        link1.move_to(UP * 0.1)
         self.pad_to(A("deep dive") - 0.3)
         self.play(FadeIn(link1, shift=UP * 0.15), run_time=0.7)
+        more = row([("Sean's blog posts", TXT), ("·", MUT), ("the Ragu book", TXT)],
+                   size=FS_BODY, buff=0.22)
+        more.set_x(0)
+        at_y(more, -0.85)
+        self.pad_to(A("my blog posts") - 0.2)
+        self.play(FadeIn(more, shift=UP * 0.12), run_time=0.7)
         link2 = url_label("https://github.com/tachyon-zcash/tachyon", FS_HEAD + 6, CYAN)
-        link2.move_to(DOWN * 1.35)
+        link2.move_to(DOWN * 1.8)
         if link2.get_width() > 2 * SAFE_X:
             link2.set_width(2 * SAFE_X)
         self.pad_to(A("implementation") - 0.3)
