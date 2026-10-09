@@ -1558,9 +1558,16 @@ decomposition into a tree of sub-statements sound.
 > wrapped in braces: $\mathtt{left}\{e, \cm\}$ with dot accessor
 > $\mathtt{left}.\cm$.
 >
-> Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge"
-> and the noun is usually a header name, whereas headers use a qualified noun
-> like "NoteSpendable, ArbitraryUnspent, NoteUnspent".
+> Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge",
+> and the noun is the header the step **emits**, not the one it reads. So
+> $\mathsf{UnspentFuse}$ fuses into an $\mathtt{ArbitraryUnspent}$, and
+> $\mathsf{EvidenceTreeFuse}$ fuses into an $\mathtt{EvidenceTree}$ although
+> it reads two $\mathtt{EvidenceTreePair}$s. Most fuse steps read and emit the
+> same header, which leaves the rule invisible until one does not. Three steps
+> whose output is a part of what they read are named for the input instead:
+> $\mathsf{QrIntakeSplit}$, $\mathsf{QrSideDescend}$ and
+> $\mathsf{EvidenceTreeOpen}$. Headers use a qualified noun like
+> "NoteSpendable, ArbitraryUnspent, NoteUnspent".
 >
 > Color: User scope is blue ($\Uc$), OSS scope is red ($\Oc$), and shared
 > headers are green ($\Sc$). OSS-generated shared-evidence steps are red.
