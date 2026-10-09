@@ -52,7 +52,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(spendable::QrSpendableInit)?
         .register(qr::QrEmptyIntakeSeed)?
         .register(pool::UnspentLift)?
-        .register(evidence::EvidenceTreeLeaf)?
         .register(evidence::EvidenceTreePairFuse)?
         .register(evidence::EvidenceTreeFuse)?
         .register(evidence::EvidenceTreeCap)?
