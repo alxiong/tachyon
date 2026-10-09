@@ -1648,14 +1648,16 @@ $\mathsf{QrSummaryIntake}$ turns each completed summary into
 
 $$
 \mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{end},
-  j,b,R_j,\mathsf{Com}(q_b(X))\}.
+  R_0,j,b,\mathsf{Com}(q_b(X))\}.
 $$
 
 Here $j$ is the routing depth, and $b$ is the integer encoding of the $j$ QR
 profile bits encountered so far, with NQR encoded as $0$ and QR as $1$.
-Appending a side bit updates $b$ to $2b+\mathsf{bit}$; $R_j$ is the next
-discriminant. The OSS keeps these routing headers unpublished until the epoch
-closes, so they do not reveal $R_0$ while users can still choose tachygrams.
+Appending a side bit updates $b$ to $2b+\mathsf{bit}$. Every routing header
+carries the network's first discriminant $R_0$ unchanged, so a header at depth
+$j$ classifies at $R_j=R_0+j$ without having to carry $R_j$ itself. The OSS
+keeps these routing headers unpublished until the epoch closes, so they do not
+reveal $R_0$ while users can still choose tachygrams.
 
 The root profile has $(j,b)=(0,0)$ and the OSS's chosen $R_0$. A stamp not yet
 included in a summary can enter through $\mathsf{QrStampIntakeSeed}$. This has
@@ -1669,7 +1671,7 @@ transition.
 For an empty epoch, $\mathsf{QrEmptyIntakeSeed}$ emits the root intake
 
 $$
-\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,0,0,R_0,
+\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,R_0,0,0,
   \mathsf{Com}(1)\}.
 $$
 
@@ -1705,8 +1707,10 @@ To realize one routing round, $\mathsf{QrSideDescend}$ is invoked once for each
 side of every split. Each invocation requires $j<32$ and appends its chosen bit,
 
 $$
-j'=j+1,\qquad b'=2b+\mathsf{bit},\qquad R_{j+1}=R_j+1.
+j'=j+1,\qquad b'=2b+\mathsf{bit},
 $$
+
+carrying $R_0$ through unchanged, so the child classifies at $R_{j+1}=R_j+1$.
 
 Checking the sibling proves the returned child is **complete** for its class:
 the product relation leaves nowhere else for a matching input root to go. The
@@ -1723,7 +1727,7 @@ construction independently to all $m$ routing buckets produces the round's $2m$
 unmerged children.
 
 $\mathsf{QrIntakeMerge}$ joins two intakes only when they have the same epoch,
-profile, and next discriminant, their anchor ranges are contiguous, and the
+profile, and first discriminant, their anchor ranges are contiguous, and the
 product fits the PCS degree limit. It fixes both input
 polynomials and their product before checking
 
@@ -1747,7 +1751,7 @@ terminal stamp anchor yields $\sntl_{e+1}$, and requires $j\leq32$. It emits the
 sentinel-bounded header
 
 $$
-\mathtt{QrBucket}\{e,\sntl_e,\sntl_{e+1},j,b,R_j,
+\mathtt{QrBucket}\{e,\sntl_e,\sntl_{e+1},R_0,j,b,
   \mathsf{Com}(q_b(X))\}.
 $$
 
@@ -1766,15 +1770,15 @@ flowchart TB
   QrSummaryIntake(["$$\mathsf{QrSummaryIntake}$$"]):::o
   QrStampIntakeSeed(["$$\mathsf{QrStampIntakeSeed}$$"]):::o
   QrEmptyIntakeSeed(["$$\mathsf{QrEmptyIntakeSeed}$$"]):::o
-  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,0,0,R_0,\mathsf{Com}(p)\}$$"]:::s
+  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,R_0,0,0,\mathsf{Com}(p)\}$$"]:::s
 
   QrIntakeSplit(["$$\mathsf{QrIntakeSplit}$$"]):::o
   sides["$$\mathtt{QrIntakeSides}\\ \{\ldots,\mathsf{Com}(q_0),\mathsf{Com}(q_1)\}$$"]:::s
 
   DescendNqr(["$$\mathsf{QrSideDescend}\\ \NQR_{R_j}\text{ side}$$"]):::o
   DescendQr(["$$\mathsf{QrSideDescend}\\ \QR_{R_j}\text{ side}$$"]):::o
-  child0["$$\mathtt{QrIntake}\\ \{\ldots,j+1,2b,R_{j+1},\mathsf{Com}(q_0)\}$$"]:::s
-  child1["$$\mathtt{QrIntake}\\ \{\ldots,j+1,2b+1,R_{j+1},\mathsf{Com}(q_1)\}$$"]:::s
+  child0["$$\mathtt{QrIntake}\\ \{\ldots,R_0,j+1,2b,\mathsf{Com}(q_0)\}$$"]:::s
+  child1["$$\mathtt{QrIntake}\\ \{\ldots,R_0,j+1,2b+1,\mathsf{Com}(q_1)\}$$"]:::s
   peer0["$$\mathtt{QrIntake}\\ \text{same }2b\text{ profile, adjacent range}$$"]:::s
   peer1["$$\mathtt{QrIntake}\\ \text{same }2b+1\text{ profile, adjacent range}$$"]:::s
 
@@ -1784,8 +1788,8 @@ flowchart TB
   merged1["$$\mathtt{QrIntake}\\ \text{merged }\QR\text{ range}$$"]:::s
   Seal0(["$$\mathsf{QrBucketSeal}$$"]):::o
   Seal1(["$$\mathsf{QrBucketSeal}$$"]):::o
-  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b,R_{j+1},\mathsf{Com}(q_{2b})\}$$"]:::s
-  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b+1,R_{j+1},\mathsf{Com}(q_{2b+1})\}$$"]:::s
+  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j+1,2b,\mathsf{Com}(q_{2b})\}$$"]:::s
+  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j+1,2b+1,\mathsf{Com}(q_{2b+1})\}$$"]:::s
 
   summary --> QrSummaryIntake --> root
   QrStampIntakeSeed --> root
@@ -1806,8 +1810,8 @@ $$
 (e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b(X)))
 $$
 
-with domain-separated Poseidon. It derives $R_0=R_j-j$ from the bucket's next
-discriminant and emits
+with domain-separated Poseidon. It reads $R_0$ off the bucket header and
+emits
 
 $$
 \mathtt{EvidenceTree}\{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}.
